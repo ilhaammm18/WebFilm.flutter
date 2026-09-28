@@ -157,21 +157,24 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
               _searchQuery.isNotEmpty || _selectedCategory != 'Semua'
                   ? 'Tidak ada $_selectedCategory yang cocok'
                   : 'Belum ada data untuk $statusFilter', 
-              style: TextStyle(color: subTextColor, fontSize: 15)
+              style: TextStyle(color: subTextColor, fontSize: 15),
             ),
           );
         }
 
         return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
           itemCount: filteredList.length,
           itemBuilder: (context, index) {
             final Drama item = filteredList[index];
             
+            // Logika conditional penilaian:
+            // Jika statusnya 'Selesai' dan userRating > 0, maka tampilkan nilai userRating.
+            // Jika belum selesai atau belum dinilai, barulah tampilkan rating global.
             String displayRating;
-            if (item.status == 'Sedang Menonton') {
-              displayRating = '0.0';
+            if (item.status == 'Selesai' && item.userRating != null && item.userRating! > 0) {
+              displayRating = item.userRating!.toStringAsFixed(1);
             } else {
               displayRating = item.rating.toStringAsFixed(1);
             }
@@ -181,27 +184,48 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
                 Navigator.push(context, MaterialPageRoute(builder: (context) => DetailPage(drama: item)));
               },
               child: Container(
-                margin: const EdgeInsets.only(bottom: 12),
+                margin: const EdgeInsets.only(bottom: 14),
                 padding: const EdgeInsets.all(12),
+                // Tampilan card melayang (elevated) dengan bayangan lembut
                 decoration: BoxDecoration(
                   color: cardColor,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: isDark
+                          ? Colors.black.withValues(alpha: 0.35)
+                          : primaryBlue.withValues(alpha: 0.06),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // POSTER
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        item.image, 
-                        width: 70, 
-                        height: 105, 
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Container(width: 70, height: 105, color: Colors.grey.shade800),
+                    // POSTER DENGAN HERO ANIMATION
+                    Hero(
+                      tag: 'drama-poster-${item.title}',
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(
+                          item.image, 
+                          width: 72, 
+                          height: 108, 
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            width: 72, 
+                            height: 108, 
+                            color: isDark ? const Color(0xFF222734) : Colors.grey.shade300,
+                            child: const Icon(Icons.movie_rounded, color: Colors.grey),
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 14),
                     
                     // KONTEN KANAN
                     Expanded(
@@ -215,15 +239,34 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(item.title, style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
-                                    const SizedBox(height: 6),
-                                    Text('${item.genre.split('•')[0].trim()} • 2025', style: TextStyle(color: subTextColor, fontSize: 12)),
+                                    Text(
+                                      item.title,
+                                      style: TextStyle(
+                                        color: textColor,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      '${item.genre.split('•')[0].trim()} • 2025',
+                                      style: TextStyle(color: subTextColor, fontSize: 12),
+                                    ),
                                     const SizedBox(height: 8),
                                     Row(
                                       children: [
-                                        const Icon(Icons.star, color: Colors.amber, size: 14),
+                                        const Icon(Icons.star_rounded, color: Color(0xFFFFB800), size: 16),
                                         const SizedBox(width: 4),
-                                        Text(displayRating, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold)),
+                                        Text(
+                                          displayRating,
+                                          style: TextStyle(
+                                            color: textColor,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                       ],
                                     ),
                                   ],
@@ -231,19 +274,20 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
                               ),
                               // TOMBOL EDIT (PENA)
                               GestureDetector(
-                                onTap: () {
-                                  showModalBottomSheet(
+                                onTap: () async {
+                                  await showModalBottomSheet(
                                     context: context,
                                     isScrollControlled: true,
                                     backgroundColor: Colors.transparent,
                                     builder: (context) => EditDramaModal(drama: item),
                                   );
+                                  if (mounted) setState(() {});
                                 },
                                 child: Container(
-                                  padding: const EdgeInsets.all(6),
+                                  padding: const EdgeInsets.all(7),
                                   decoration: BoxDecoration(
-                                    color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200, 
-                                    borderRadius: BorderRadius.circular(8)
+                                    color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade100, 
+                                    borderRadius: BorderRadius.circular(9),
                                   ),
                                   child: Icon(Icons.edit_outlined, color: subTextColor, size: 18),
                                 ),
@@ -251,70 +295,44 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
                             ],
                           ),
                           
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 10),
                           
-                          // ===================================================
-                          // FITUR TAMBAH EPISODE KHUSUS TAB "SEDANG MENONTON"
-                          // ===================================================
-                          if (statusFilter == 'Sedang Menonton') ...[
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Progres: ${item.watchedEpisodes}/${item.episodes}', 
-                                  style: TextStyle(color: subTextColor, fontSize: 11)
+                          // INFORMASI PROGRES
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Progres: ${item.watchedEpisodes}/${item.episodes}', 
+                                style: TextStyle(
+                                  color: subTextColor,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w500,
                                 ),
-                                // Tombol Cepat Tambah Episode (+1)
-                                GestureDetector(
-                                  onTap: () {
-                                    // Logika menambah 1 episode
-                                    if (item.watchedEpisodes < item.episodes) {
-                                      setState(() {
-                                        item.watchedEpisodes++;
-                                        // Jika sudah mencapai total episode, otomatis ubah status jadi Selesai!
-                                        if (item.watchedEpisodes >= item.episodes) {
-                                          item.status = 'Selesai';
-                                        }
-                                      });
-                                      SharedData.dramaListNotifier.notifyListeners();
-                                    }
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: primaryBlue.withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.add, color: primaryBlue, size: 14),
-                                        const SizedBox(width: 2),
-                                        Text('Episode', style: TextStyle(color: primaryBlue, fontSize: 11, fontWeight: FontWeight.bold)),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ] else ...[
-                            // Teks Progres Biasa untuk Tab Lainnya
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                '${item.watchedEpisodes}/${item.episodes}', 
-                                style: TextStyle(color: subTextColor, fontSize: 11)
                               ),
-                            ),
-                          ],
+                              Text(
+                                '${item.progressPercentInt}%',
+                                style: TextStyle(
+                                  color: statusFilter == 'Sedang Menonton' ? primaryBlue : subTextColor,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
 
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           
-                          // GARIS PROGRESS BAR TIPIS
-                          LinearProgressIndicator(
-                            value: item.episodes > 0 ? item.watchedEpisodes / item.episodes : 0,
-                            backgroundColor: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200,
-                            valueColor: AlwaysStoppedAnimation<Color>(statusFilter == 'Sedang Menonton' ? primaryBlue : Colors.grey.shade700),
-                            minHeight: 2,
+                          // GARIS PROGRESS BAR
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: item.progressPercentage,
+                              backgroundColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                statusFilter == 'Sedang Menonton' ? primaryBlue : Colors.grey.shade600,
+                              ),
+                              minHeight: 3,
+                            ),
                           ),
                         ],
                       ),

@@ -106,13 +106,24 @@ class SeeAllPage extends StatelessWidget {
                   ),
                   
                   // TOMBOL TAMBAH (PLUS) DI KANAN
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (context) => EditDramaModal(drama: item),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(Icons.add, color: subTextColor, size: 20),
                     ),
-                    child: Icon(Icons.add, color: subTextColor, size: 20),
                   )
                 ],
               ),

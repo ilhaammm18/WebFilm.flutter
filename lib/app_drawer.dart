@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'main.dart';
 import 'login_page.dart';
+import 'main_navigation.dart';
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({super.key});
@@ -22,37 +23,60 @@ class AppDrawer extends StatelessWidget {
       child: SafeArea(
         child: Column(
           children: [
-            const SizedBox(height: 24),
-            // FOTO PROFIL
-            const CircleAvatar(
-              radius: 40,
-              backgroundImage: AssetImage('assets/profile.jpg'),
+            const SizedBox(height: 20),
+            // FOTO PROFIL & IDENTITAS (Dapat diklik untuk menuju Profil / About Me)
+            InkWell(
+              onTap: () {
+                Navigator.pop(context); // Tutup drawer
+                globalNavIndex.value = 3; // Pindah ke Tab Profil (About Me)
+              },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  children: [
+                    const CircleAvatar(
+                      radius: 40,
+                      backgroundImage: AssetImage('assets/profile.jpg'),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Muhammad Nur Ilham',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'NIM : 25051204433',
+                      style: TextStyle(
+                        color: subTextColor,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 16),
-            
-            // NAMA & NIM
-            Text(
-              'Muhammad Nur Ilham',
-              style: TextStyle(
-                color: textColor,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'NIM : 25051204433',
-              style: TextStyle(
-                color: subTextColor,
-                fontSize: 13,
-              ),
-            ),
-            const SizedBox(height: 24),
             
             // GARIS PEMISAH YANG SUDAH DIPERHALUS
             Divider(color: dividerColor, thickness: 1, height: 1),
             
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            
+            // MENU: Profil / Tentang Saya (About Me)
+            ListTile(
+              leading: Icon(Icons.person_outline, color: textColor),
+              title: Text('Profil', style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600)),
+              trailing: Icon(Icons.arrow_forward_ios, size: 14, color: subTextColor),
+              onTap: () {
+                Navigator.pop(context); // Tutup drawer
+                globalNavIndex.value = 3; // Pindah ke Tab Profil (About Me)
+              },
+            ),
             
             // MENU: Mode Gelap
             ListTile(
@@ -60,7 +84,7 @@ class AppDrawer extends StatelessWidget {
               title: Text('Mode Gelap', style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600)),
               trailing: Switch(
                 value: isDark,
-                activeColor: const Color(0xFF0094FF),
+                activeThumbColor: const Color(0xFF0094FF),
                 onChanged: (value) {
                   MyApp.themeNotifier.value = value ? ThemeMode.dark : ThemeMode.light;
                 },

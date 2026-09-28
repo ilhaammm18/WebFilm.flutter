@@ -13,6 +13,7 @@ class SearchPage extends StatefulWidget {
 class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   String _searchQuery = '';
+  String _selectedCategory = 'Semua';
 
   @override
   void initState() {
@@ -61,7 +62,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                         style: TextStyle(color: textColor, fontSize: 14),
                         decoration: InputDecoration(
                           hintText: 'Cari',
-                          hintStyle: TextStyle(color: subTextColor, fontSize: 14),
+                          hintStyle: TextStyle(color: subTextColor, fontSize: 13),
                           border: InputBorder.none,
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           suffixIcon: Icon(Icons.search, color: subTextColor, size: 20),
@@ -75,18 +76,41 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(color: inputBg, borderRadius: BorderRadius.circular(12)),
-                    child: Icon(Icons.swap_vert, color: subTextColor, size: 20),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(color: inputBg, borderRadius: BorderRadius.circular(12)),
-                    child: Icon(Icons.tune, color: subTextColor, size: 20),
+                  // Menu PopupMenuButton untuk filter kategori ('Semua', 'Drama', 'Film', 'Anime')
+                  PopupMenuButton<String>(
+                    initialValue: _selectedCategory,
+                    tooltip: 'Filter Kategori',
+                    color: isDark ? const Color(0xFF1F222A) : Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    onSelected: (value) {
+                      setState(() {
+                        _selectedCategory = value;
+                      });
+                    },
+                    itemBuilder: (context) => [
+                      _buildCategoryPopupItem('Semua', isDark, primaryBlue),
+                      _buildCategoryPopupItem('Drama', isDark, primaryBlue),
+                      _buildCategoryPopupItem('Film', isDark, primaryBlue),
+                      _buildCategoryPopupItem('Anime', isDark, primaryBlue),
+                    ],
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _selectedCategory == 'Semua' ? inputBg : primaryBlue.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _selectedCategory == 'Semua'
+                              ? (isDark ? Colors.transparent : Colors.grey.shade300)
+                              : primaryBlue.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.tune,
+                        color: _selectedCategory == 'Semua' ? subTextColor : primaryBlue,
+                        size: 20,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -100,7 +124,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
               dividerColor: Colors.transparent, 
               tabs: const [
                 Tab(text: 'JUDUL'),
-                Tab(text: 'ORANG'),
+                Tab(text: 'AKTOR'),
               ],
             ),
             
@@ -109,7 +133,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                 controller: _tabController,
                 children: [
                   _buildJudulTab(cardColor, textColor, subTextColor),
-                  const Center(child: Text('Data Orang Belum Tersedia', style: TextStyle(color: Colors.grey))),
+                  const Center(child: Text('Data Aktor Belum Tersedia', style: TextStyle(color: Colors.grey))),
                 ],
               ),
             ),
@@ -119,13 +143,83 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     );
   }
 
+  PopupMenuItem<String> _buildCategoryPopupItem(String title, bool isDark, Color primaryBlue) {
+    bool isSelected = _selectedCategory == title;
+    return PopupMenuItem<String>(
+      value: title,
+      child: Row(
+        children: [
+          Icon(
+            isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+            size: 18,
+            color: isSelected ? primaryBlue : Colors.grey,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            title,
+            style: TextStyle(
+              color: isSelected ? primaryBlue : (isDark ? Colors.white : Colors.black87),
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildJudulTab(Color cardColor, Color textColor, Color subTextColor) {
+    bool isDark = Theme.of(context).brightness == Brightness.dark;
+    Color primaryBlue = const Color(0xFF0094FF);
+
     return ValueListenableBuilder<List<Drama>>(
       valueListenable: SharedData.dramaListNotifier,
       builder: (context, dramaList, _) {
         
-        List<Drama> searchResults = dramaList.where((d) => d.title.toLowerCase().contains(_searchQuery)).toList();
+        // Filter berdasarkan query teks DAN kategori yang dipilih
+        List<Drama> searchResults = dramaList.where((d) {
+          bool matchesQuery = d.title.toLowerCase().contains(_searchQuery) ||
+              d.koreanTitle.toLowerCase().contains(_searchQuery);
+          if (!matchesQuery) return false;
+
+          if (_selectedCategory == 'Semua') return true;
+          if (_selectedCategory == 'Drama') {
+            return d.genre.toLowerCase().contains('drama') || d.episodes > 1;
+          }
+          if (_selectedCategory == 'Film') {
+            return d.genre.toLowerCase().contains('film') || d.episodes == 1;
+          }
+          if (_selectedCategory == 'Anime') {
+            return d.genre.toLowerCase().contains('anime') ||
+                d.genresList.any((g) => g.toLowerCase().contains('anime')) ||
+                d.tagsList.any((t) => t.toLowerCase().contains('anime'));
+          }
+          return true;
+        }).toList();
+
         searchResults.sort((a, b) => b.rating.compareTo(a.rating));
+
+        if (searchResults.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.search_off_rounded, size: 54, color: subTextColor.withValues(alpha: 0.5)),
+                const SizedBox(height: 12),
+                Text(
+                  'Tidak ditemukan judul yang cocok',
+                  style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+                if (_selectedCategory != 'Semua') ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Kategori: $_selectedCategory',
+                    style: TextStyle(color: subTextColor, fontSize: 13),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -191,7 +285,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                       ),
                     ),
                     
-                    // TOMBOL DINAMIS: PENA ATAU PLUS
+                    // TOMBOL DINAMIS: PENA (EDIT) ATAU PLUS (TAMBAH)
                     GestureDetector(
                       onTap: () {
                         showModalBottomSheet(
@@ -204,19 +298,19 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).brightness == Brightness.dark 
-                              ? Colors.white.withValues(alpha: 0.05) 
-                              : Colors.grey.shade200, 
-                          borderRadius: BorderRadius.circular(8)
+                          color: isInWatchlist
+                              ? (isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade100)
+                              : primaryBlue.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        // JIKA ADA DI DAFTAR TAMPILKAN PENA, JIKA BELUM TAMPILKAN PLUS
+                        // JIKA ADA DI DAFTAR TAMPILKAN PENA (Icons.edit), JIKA BELUM TAMPILKAN PLUS (Icons.add)
                         child: Icon(
-                          isInWatchlist ? Icons.edit_outlined : Icons.add, 
-                          color: subTextColor, 
-                          size: 20
+                          isInWatchlist ? Icons.edit : Icons.add, 
+                          color: isInWatchlist ? subTextColor : primaryBlue, 
+                          size: 20,
                         ),
                       ),
-                    )
+                    ),
                   ],
                 ),
               ),

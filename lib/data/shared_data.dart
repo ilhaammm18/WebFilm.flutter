@@ -1,6 +1,16 @@
 import 'package:flutter/material.dart';
 import '../models/drama.dart';
+import '../models/user.dart';
 import 'dart:math';
+
+class DramaListNotifier extends ValueNotifier<List<Drama>> {
+  DramaListNotifier(super.value);
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+  }
+}
 
 class SharedData {
   static final List<String> _filmKorea = [
@@ -49,6 +59,9 @@ class SharedData {
           episodes: episodes,
           watchedEpisodes: randomStatus == 'Selesai' ? episodes : (randomStatus == 'Belum Ditonton' ? 0 : (isFilm ? 0 : random.nextInt(episodes))),
           status: randomStatus,
+          myRating: randomStatus == 'Selesai'
+              ? double.parse((rating - 0.2).clamp(1.0, 10.0).toStringAsFixed(1))
+              : null,
           priority: 'Sedang',
           startDate: '',
           endDate: '',
@@ -75,5 +88,13 @@ class SharedData {
     return generatedList;
   }
 
-  static final ValueNotifier<List<Drama>> dramaListNotifier = ValueNotifier<List<Drama>>(_generateData());
+  static final DramaListNotifier dramaListNotifier = DramaListNotifier(_generateData());
+
+  static final User currentUser = User(
+    username: 'ilham_dev',
+    fullName: 'Muhamad Ilham',
+    email: 'ilham@mydramalist.id',
+    avatarUrl: 'https://picsum.photos/seed/profileilham/200/200',
+    joinedDate: DateTime(2024, 2, 14),
+  );
 }
