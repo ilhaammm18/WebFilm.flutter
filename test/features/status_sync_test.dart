@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tugas_pbp/models/drama.dart';
 import 'package:tugas_pbp/data/shared_data.dart';
-import 'package:tugas_pbp/watchlist_tab.dart';
-import 'package:tugas_pbp/edit_drama_modal.dart';
+import 'package:tugas_pbp/screens/watchlist_tab.dart';
+import 'package:tugas_pbp/widgets/edit_drama_modal.dart';
 
 void main() {
   setUp(() {
@@ -100,7 +100,10 @@ void main() {
 
       // Verifikasi drama muncul di tab 'RENCANA DITONTON'
       expect(find.text('My Mister'), findsOneWidget);
-      expect(find.text('Progres: 0/16'), findsOneWidget);
+      expect(find.text('16'), findsOneWidget);
+      expect(find.byIcon(Icons.subtitles_rounded), findsOneWidget);
+      expect(find.text('Progres: 0/16'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
 
       // Buka modal edit melalui tombol pena
       final editButton = find.byIcon(Icons.edit_outlined);
@@ -202,7 +205,7 @@ void main() {
 
       // Verifikasi drama telah MUNCUL di tab 'SELESAI'
       expect(find.text('Signal'), findsOneWidget);
-      expect(find.text('Progres: 16/16'), findsOneWidget);
+      expect(find.text('16'), findsOneWidget);
     });
   });
 }

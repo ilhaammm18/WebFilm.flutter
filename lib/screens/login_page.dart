@@ -25,7 +25,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
   late Animation<double> _actionFade;
   late Animation<Offset> _actionSlide;
 
-  final String _appTitle = "MyDramaList";
+  final String _appTitle = "MyWatchList";
   bool _isObscure = true;
   bool _isLoading = false;
 
@@ -53,7 +53,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
       vsync: this,
     );
 
-    // Animasi efek ketik judul MyDramaList (0% - 35%)
+    // Animasi efek ketik judul MyWatchList (0% - 35%)
     _charCount = StepTween(begin: 0, end: _appTitle.length).animate(
       CurvedAnimation(
         parent: _formController,
@@ -442,7 +442,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Text(
-                                  'Baru di MyDramaList? ',
+                                  'Baru di MyWatchList? ',
                                   style: TextStyle(
                                     color: Colors.grey.shade400,
                                     fontSize: 13,

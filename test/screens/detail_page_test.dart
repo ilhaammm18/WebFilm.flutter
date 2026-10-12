@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tugas_pbp/detail_page.dart';
+import 'package:tugas_pbp/screens/detail_page.dart';
 import 'package:tugas_pbp/models/drama.dart';
 import 'package:tugas_pbp/data/shared_data.dart';
 

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'models/drama.dart';
-import 'data/shared_data.dart';
+import '../models/drama.dart';
+import '../data/shared_data.dart';
 
 class EditDramaModal extends StatefulWidget {
   final Drama drama;
@@ -26,6 +26,7 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
   late double _rating;
   late int _watchedEpisodes;
   late int _totalEpisodes;
+  DateTime? _dateCompleted;
   
   late String _priority;
   late TextEditingController _startDateController;
@@ -48,6 +49,7 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
     _totalEpisodes = widget.drama.episodes;
     
     _priority = widget.drama.priority.isNotEmpty ? widget.drama.priority : 'Sedang';
+    _dateCompleted = widget.drama.dateCompleted;
     _startDateController = TextEditingController(text: widget.drama.startDate);
     _endDateController = TextEditingController(text: widget.drama.endDate);
   }
@@ -63,6 +65,9 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
   // Sinkronisasi status otomatis berdasarkan jumlah episode ditonton
   void _syncStatusFromEpisodes() {
     if (_totalEpisodes > 0 && _watchedEpisodes >= _totalEpisodes) {
+      if (_status != 'Selesai') {
+        _dateCompleted = DateTime.now();
+      }
       _status = 'Selesai';
     } else if (_watchedEpisodes > 0 && _watchedEpisodes < _totalEpisodes) {
       _status = 'Sedang Menonton';
@@ -137,10 +142,17 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
   // FUNGSI SIMPAN PERUBAHAN: Terhubung 100% dengan State & Data Asli
   void _saveChanges() {
     // Terapkan aturan logika update status otomatis:
-    // if (watchedEpisodes == 0) ➔ Ubah status menjadi 'Rencana Ditonton'.
-    // if (watchedEpisodes > 0 && watchedEpisodes < totalEpisodes) ➔ Ubah status menjadi 'Sedang Menonton'.
-    // if (watchedEpisodes == totalEpisodes) ➔ Ubah status menjadi 'Selesai'.
-    _syncStatusFromEpisodes();
+    if (widget.drama.mediaType != 'movie') {
+      _syncStatusFromEpisodes();
+    } else {
+      _watchedEpisodes = (_status == 'Selesai') ? 1 : 0;
+    }
+
+    if (_status == 'Selesai') {
+      _dateCompleted ??= DateTime.now();
+    } else {
+      _dateCompleted = null;
+    }
 
     // 1. Perbarui objek drama yang aktif
     widget.drama.watchedEpisodes = _watchedEpisodes;
@@ -149,6 +161,7 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
     widget.drama.priority = _priority;
     widget.drama.startDate = _startDateController.text;
     widget.drama.endDate = _endDateController.text;
+    widget.drama.dateCompleted = _dateCompleted;
 
     // 2. Perbarui list di SharedData.dramaListNotifier
     List<Drama> currentList = List<Drama>.from(SharedData.dramaListNotifier.value);
@@ -163,6 +176,7 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
       currentList[targetIndex].priority = _priority;
       currentList[targetIndex].startDate = _startDateController.text;
       currentList[targetIndex].endDate = _endDateController.text;
+      currentList[targetIndex].dateCompleted = _dateCompleted;
       
       // Pindahkan drama yang baru diedit ke urutan paling depan (index 0)
       Drama editedDrama = currentList.removeAt(targetIndex);
@@ -279,9 +293,11 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
                           const Icon(Icons.star_rounded, color: Color(0xFFFFB800), size: 16),
                           const SizedBox(width: 4),
                           Text('${widget.drama.rating.toStringAsFixed(1)}   ', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
-                          Icon(Icons.list_alt, color: subTextColor, size: 16),
-                          const SizedBox(width: 4),
-                          Text('${widget.drama.watchedEpisodes}/${widget.drama.episodes}', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+                          if (widget.drama.mediaType != 'movie') ...[
+                            Icon(Icons.list_alt, color: subTextColor, size: 16),
+                            const SizedBox(width: 4),
+                            Text('${widget.drama.watchedEpisodes}/${widget.drama.episodes}', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+                          ],
                         ],
                       )
                     ],
@@ -384,8 +400,12 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
                       _status = newValue; 
                       if (_status == 'Selesai') {
                         _watchedEpisodes = _totalEpisodes;
+                        _dateCompleted = DateTime.now();
                       } else if (_status == 'Belum Ditonton') {
                         _watchedEpisodes = 0;
+                        _dateCompleted = null;
+                      } else {
+                        _dateCompleted = null;
                       }
                     });
                   }
@@ -396,103 +416,104 @@ class _EditDramaModalState extends State<EditDramaModal> with SingleTickerProvid
           const SizedBox(height: 22),
           
           // 2. BAGIAN EPISODE: TEKS PROGRES (0/16) + ICON BUTTON PENSIL, (-) DAN (+)
-          Text('Episode', style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              // Teks progres (contoh: 0/16)
-              Text(
-                '$_watchedEpisodes/$_totalEpisodes',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Spacer(),
-              // Icon button Edit (pensil)
-              InkWell(
-                onTap: () => _showEditEpisodeDialog(context, textColor, inputBg, primaryBlue),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: actionBtnBg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
-                    ),
+          if (widget.drama.mediaType != 'movie') ...[
+            Text('Episode', style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                // Teks progres (contoh: 0/16)
+                Text(
+                  '$_watchedEpisodes/$_totalEpisodes',
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: Icon(Icons.edit_outlined, color: isDark ? Colors.grey.shade300 : Colors.grey.shade700, size: 18),
                 ),
-              ),
-              const SizedBox(width: 8),
-              // Tombol (-) untuk mengurangi 1 episode
-              InkWell(
-                onTap: () {
-                  if (_watchedEpisodes > 0) {
-                    setState(() {
-                      _watchedEpisodes--;
-                      _syncStatusFromEpisodes();
-                    });
-                  }
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: actionBtnBg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                const Spacer(),
+                // Icon button Edit (pensil)
+                InkWell(
+                  onTap: () => _showEditEpisodeDialog(context, textColor, inputBg, primaryBlue),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: actionBtnBg,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                      ),
                     ),
+                    child: Icon(Icons.edit_outlined, color: isDark ? Colors.grey.shade300 : Colors.grey.shade700, size: 18),
                   ),
-                  child: Icon(Icons.remove, color: isDark ? Colors.grey.shade300 : Colors.grey.shade700, size: 18),
                 ),
-              ),
-              const SizedBox(width: 8),
-              // Tombol (+) untuk menambah 1 episode
-              InkWell(
-                onTap: () {
-                  if (_watchedEpisodes < _totalEpisodes) {
-                    setState(() {
-                      _watchedEpisodes++;
-                      _syncStatusFromEpisodes();
-                    });
-                  }
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: actionBtnBg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                const SizedBox(width: 8),
+                // Tombol (-) untuk mengurangi 1 episode
+                InkWell(
+                  onTap: () {
+                    if (_watchedEpisodes > 0) {
+                      setState(() {
+                        _watchedEpisodes--;
+                        _syncStatusFromEpisodes();
+                      });
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: actionBtnBg,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                      ),
                     ),
+                    child: Icon(Icons.remove, color: isDark ? Colors.grey.shade300 : Colors.grey.shade700, size: 18),
                   ),
-                  child: Icon(Icons.add, color: isDark ? Colors.grey.shade300 : Colors.grey.shade700, size: 18),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: _totalEpisodes > 0 ? _watchedEpisodes / _totalEpisodes : 0,
-              backgroundColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
-              valueColor: AlwaysStoppedAnimation<Color>(primaryBlue),
-              minHeight: 4,
+                const SizedBox(width: 8),
+                // Tombol (+) untuk menambah 1 episode
+                InkWell(
+                  onTap: () {
+                    if (_watchedEpisodes < _totalEpisodes) {
+                      setState(() {
+                        _watchedEpisodes++;
+                        _syncStatusFromEpisodes();
+                      });
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: actionBtnBg,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
+                      ),
+                    ),
+                    child: Icon(Icons.add, color: isDark ? Colors.grey.shade300 : Colors.grey.shade700, size: 18),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Episode terakhir ditonton Episode $_watchedEpisodes',
-            style: TextStyle(color: subTextColor, fontSize: 12),
-          ),
-          
-          const SizedBox(height: 22),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: _totalEpisodes > 0 ? _watchedEpisodes / _totalEpisodes : 0,
+                backgroundColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
+                valueColor: AlwaysStoppedAnimation<Color>(primaryBlue),
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Episode terakhir ditonton Episode $_watchedEpisodes',
+              style: TextStyle(color: subTextColor, fontSize: 12),
+            ),
+            const SizedBox(height: 22),
+          ],
           
           // 3. BAGIAN PERINGKAT: TEKS ANGKA RATING (0.0 - 10.0) + IKON BINTANG (⭐) REAL-TIME DI ATAS SLIDER
           Row(

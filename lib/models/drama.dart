@@ -4,6 +4,9 @@ class Drama {
   // ==========================================
   // Seluruh atribut dibungkus secara privat dengan awalan underscore (_)
   // untuk menjamin data integrity dan mencegah manipulasi langsung dari luar kelas.
+  int _id;
+  String _mediaType;
+  String _backdrop;
   String _title;
   String _koreanTitle;
   String _genre;
@@ -26,12 +29,18 @@ class Drama {
   String _contentRating;
   List<String> _genresList;
   List<String> _tagsList;
+  DateTime? dateCompleted;
+  String _originalLanguage;
+  List<int> _genreIds;
 
   // ==========================================
   // CONSTRUCTOR (BLUEPRINT PEMBANGUN OBJEK)
   // ==========================================
   /// Constructor dengan named parameter dan validasi nilai inisialisasi awal.
   Drama({
+    int id = 0,
+    String? mediaType,
+    String? backdrop,
     required String title,
     required String koreanTitle,
     required String genre,
@@ -55,7 +64,17 @@ class Drama {
     required List<String> tagsList,
     double? myRating,
     double? userRating,
-  })  : _title = title.trim().isEmpty ? 'Untitled' : title.trim(),
+    this.dateCompleted,
+    String originalLanguage = '',
+    List<int>? genreIds,
+  })  : _id = (id >= 0) ? id : 0,
+        _mediaType = (mediaType != null && mediaType.trim().isNotEmpty)
+            ? mediaType.trim()
+            : ((genre.toLowerCase().contains('film') || episodes == 1)
+                ? 'movie'
+                : 'tv'),
+        _backdrop = backdrop?.trim() ?? '',
+        _title = title.trim().isEmpty ? 'Untitled' : title.trim(),
         _koreanTitle = koreanTitle.trim(),
         _genre = genre.trim().isEmpty ? 'General' : genre.trim(),
         _rating = rating.clamp(0.0, 10.0),
@@ -82,11 +101,60 @@ class Drama {
         _duration = duration.trim(),
         _contentRating = contentRating.trim(),
         _genresList = List<String>.from(genresList),
-        _tagsList = List<String>.from(tagsList);
+        _tagsList = List<String>.from(tagsList),
+        _originalLanguage = originalLanguage.trim(),
+        _genreIds = genreIds != null ? List<int>.from(genreIds) : <int>[];
 
   // ==========================================
   // GETTER & SETTER (PBO: ENKAPSULASI & VALIDASI)
   // ==========================================
+
+  /// Getter untuk ID TMDB drama/film
+  int get id => _id;
+
+  /// Setter untuk ID TMDB
+  set id(int value) {
+    if (value >= 0) {
+      _id = value;
+    }
+  }
+
+  /// Getter untuk tipe media ('movie' atau 'tv')
+  String get mediaType => _mediaType;
+
+  /// Setter untuk tipe media
+  set mediaType(String value) {
+    if (value.trim().isNotEmpty) {
+      _mediaType = value.trim();
+    }
+  }
+
+  /// Memeriksa apakah media adalah film (movie)
+  bool get isMovie => _mediaType == 'movie';
+
+  /// Getter untuk bahasa asli
+  String get originalLanguage => _originalLanguage;
+
+  /// Setter untuk bahasa asli
+  set originalLanguage(String value) {
+    _originalLanguage = value.trim();
+  }
+
+  /// Getter untuk daftar ID genre
+  List<int> get genreIds => List.unmodifiable(_genreIds);
+
+  /// Setter untuk daftar ID genre
+  set genreIds(List<int> value) {
+    _genreIds = List<int>.from(value);
+  }
+
+  /// Getter untuk URL backdrop
+  String get backdrop => _backdrop.isNotEmpty ? _backdrop : _image;
+
+  /// Setter untuk URL backdrop
+  set backdrop(String value) {
+    _backdrop = value.trim();
+  }
 
   /// Getter untuk judul utama drama
   String get title => _title;
@@ -123,6 +191,9 @@ class Drama {
   set rating(double value) {
     _rating = value.clamp(0.0, 10.0);
   }
+
+  /// Getter alias untuk rating (voteAverage dari TMDB)
+  double get voteAverage => _rating;
 
   /// Getter untuk skor rating penilaian pribadi pengguna
   double? get myRating => _myRating;
@@ -233,6 +304,9 @@ class Drama {
   set date(String value) {
     _date = value.trim();
   }
+
+  /// Getter alias untuk tanggal rilis (releaseDate dari TMDB)
+  String get releaseDate => _date;
 
   /// Getter untuk URL gambar poster
   String get image => _image;
@@ -399,6 +473,9 @@ class Drama {
 
   /// [Method 8] Method copyWith untuk membuat salinan objek dengan modifikasi atribut terpilih (Prinsip PBO)
   Drama copyWith({
+    int? id,
+    String? mediaType,
+    String? backdrop,
     String? title,
     String? koreanTitle,
     String? genre,
@@ -422,8 +499,14 @@ class Drama {
     List<String>? tagsList,
     double? myRating,
     double? userRating,
+    DateTime? dateCompleted,
+    String? originalLanguage,
+    List<int>? genreIds,
   }) {
     return Drama(
+      id: id ?? _id,
+      mediaType: mediaType ?? _mediaType,
+      backdrop: backdrop ?? _backdrop,
       title: title ?? _title,
       koreanTitle: koreanTitle ?? _koreanTitle,
       genre: genre ?? _genre,
@@ -446,11 +529,99 @@ class Drama {
       contentRating: contentRating ?? _contentRating,
       genresList: genresList ?? List<String>.from(_genresList),
       tagsList: tagsList ?? List<String>.from(_tagsList),
+      dateCompleted: dateCompleted ?? this.dateCompleted,
+      originalLanguage: originalLanguage ?? _originalLanguage,
+      genreIds: genreIds ?? List<int>.from(_genreIds),
     );
   }
+
+  /// Factory constructor untuk memetakan response JSON Movie/TV dari TMDB API
+  factory Drama.fromTmdbJson(Map<String, dynamic> json,
+      {String defaultGenre = 'Film', String? mediaType}) {
+    final int id = json['id'] as int? ?? 0;
+    final String? posterPath = json['poster_path'] as String?;
+    final String imageUrl = (posterPath != null && posterPath.isNotEmpty)
+        ? 'https://image.tmdb.org/t/p/w500$posterPath'
+        : '';
+    final String? backdropPath = json['backdrop_path'] as String?;
+    final String backdropUrl = (backdropPath != null && backdropPath.isNotEmpty)
+        ? 'https://image.tmdb.org/t/p/w780$backdropPath'
+        : imageUrl;
+    final double voteAverage =
+        (json['vote_average'] as num?)?.toDouble() ?? 0.0;
+    final String title =
+        json['title'] as String? ?? (json['name'] as String? ?? 'Untitled');
+    final String originalTitle = json['original_title'] as String? ??
+        (json['original_name'] as String? ?? title);
+    final String releaseDate = json['release_date'] as String? ??
+        (json['first_air_date'] as String? ?? '');
+    final String overview =
+        json['overview'] as String? ?? 'Tidak ada sinopsis.';
+    final int voteCount = json['vote_count'] as int? ?? 0;
+    final double pop = (json['popularity'] as num?)?.toDouble() ?? 0.0;
+    final String origLang = json['original_language'] as String? ?? '';
+    final List<int> gIds = (json['genre_ids'] as List<dynamic>?)
+            ?.map((e) => (e as num).toInt())
+            .toList() ??
+        <int>[];
+
+    DateTime? dateCompleted;
+    if (json['date_completed'] != null) {
+      dateCompleted = DateTime.tryParse(json['date_completed'].toString());
+    }
+
+    final String detectedMediaType = mediaType ??
+        (json['media_type'] as String? ??
+            (json.containsKey('title')
+                ? 'movie'
+                : (json.containsKey('name')
+                    ? 'tv'
+                    : (defaultGenre.toLowerCase().contains('film')
+                        ? 'movie'
+                        : 'tv'))));
+
+    final bool isMovieType = detectedMediaType == 'movie';
+
+    return Drama(
+      id: id,
+      mediaType: detectedMediaType,
+      backdrop: backdropUrl,
+      title: title,
+      koreanTitle: originalTitle,
+      genre: defaultGenre,
+      rating: double.parse(voteAverage.toStringAsFixed(1)),
+      episodes: isMovieType ? 1 : 16,
+      watchedEpisodes: 0,
+      status: 'Rencana Ditonton',
+      priority: 'Sedang',
+      startDate: '',
+      endDate: '',
+      date: releaseDate,
+      image: imageUrl,
+      rank: '#1',
+      popularity: '${pop.toInt()}',
+      watchers: '$voteCount',
+      synopsis: overview,
+      aired: releaseDate,
+      duration: isMovieType ? '120 menit' : '60 menit',
+      contentRating: '13+',
+      genresList: [defaultGenre],
+      tagsList: ['TMDB'],
+      dateCompleted: dateCompleted,
+      originalLanguage: origLang,
+      genreIds: gIds,
+    );
+  }
+
+  factory Drama.fromTmdbMovieJson(Map<String, dynamic> json) =>
+      Drama.fromTmdbJson(json);
+
+  factory Drama.fromJson(Map<String, dynamic> json) => Drama.fromTmdbJson(json);
 
   @override
   String toString() {
     return 'Drama(title: $_title, progress: $_watchedEpisodes/$_episodes, status: $_status, rating: $_rating)';
   }
 }
+
+typedef Movie = Drama;

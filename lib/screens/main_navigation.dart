@@ -4,6 +4,7 @@ import 'explore_tab.dart'; // Tab 1: Jelajahi
 import 'watchlist_tab.dart'; // Tab 2: Daftar
 import 'ranking_tab.dart'; // Tab 3: Peringkat
 import 'profile_tab.dart'; // Tab 4: Profil
+import '../data/shared_data.dart';
 
 // Variabel global agar kita bisa berpindah tab dari halaman mana saja (misalnya dari tombol "Lihat Semua")
 ValueNotifier<int> globalNavIndex = ValueNotifier<int>(0);
@@ -27,15 +28,22 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   void initState() {
     super.initState();
+    // Mensinkronkan data TMDB untuk Watchlist & Profil
+    SharedData.syncWithTmdb();
+
     // Mendengarkan perubahan pada globalNavIndex
-    globalNavIndex.addListener(() {
+    globalNavIndex.addListener(_onNavIndexChanged);
+  }
+
+  void _onNavIndexChanged() {
+    if (mounted) {
       setState(() {});
-    });
+    }
   }
 
   @override
   void dispose() {
-    // globalNavIndex TIDAK di-dispose di sini karena ia adalah variabel global yang dipakai berulang kali
+    globalNavIndex.removeListener(_onNavIndexChanged);
     super.dispose();
   }
 

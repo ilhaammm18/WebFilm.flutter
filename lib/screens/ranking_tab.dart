@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'app_drawer.dart';
+import '../widgets/app_drawer.dart';
 import 'detail_page.dart';
-import 'models/drama.dart';
-import 'data/shared_data.dart';
+import '../models/drama.dart';
+import '../data/shared_data.dart';
 
 class RankingTab extends StatefulWidget {
   const RankingTab({super.key});

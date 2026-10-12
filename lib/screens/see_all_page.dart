@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'models/drama.dart';
+import '../models/drama.dart';
 import 'detail_page.dart';
 
 class SeeAllPage extends StatelessWidget {
@@ -43,10 +43,20 @@ class SeeAllPage extends StatelessWidget {
         itemCount: dramaList.length,
         itemBuilder: (context, index) {
           final Drama item = dramaList[index];
+          final String heroTag = 'see_all_${item.id > 0 ? item.id : item.title}';
           
           return GestureDetector(
             onTap: () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => DetailPage(drama: item)));
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => DetailPage(
+                    drama: item,
+                    heroTag: heroTag,
+                    posterUrl: item.image,
+                  ),
+                ),
+              );
             },
             child: Container(
               margin: const EdgeInsets.only(bottom: 16),
@@ -67,20 +77,23 @@ class SeeAllPage extends StatelessWidget {
               child: Row(
                 children: [
                   // POSTER
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      item.image, 
-                      width: 60, 
-                      height: 85, 
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          width: 60, height: 85,
-                          color: Colors.grey.shade800,
-                          child: const Icon(Icons.movie, color: Colors.grey),
-                        );
-                      },
+                  Hero(
+                    tag: heroTag,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        item.image, 
+                        width: 60, 
+                        height: 85, 
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: 60, height: 85,
+                            color: Colors.grey.shade800,
+                            child: const Icon(Icons.movie, color: Colors.grey),
+                          );
+                        },
+                      ),
                     ),
                   ),
                   const SizedBox(width: 16),

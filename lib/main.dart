@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'login_page.dart'; 
+import 'screens/login_page.dart'; 
 
 void main() {
   runApp(const MyApp());
@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
       builder: (_, ThemeMode currentMode, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'MyDramaList',
+          title: 'MyWatchList',
           
           theme: ThemeData(
             brightness: Brightness.light,
