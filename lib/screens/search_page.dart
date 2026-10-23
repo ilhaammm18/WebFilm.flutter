@@ -1,14 +1,16 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../routes/app_router.dart';
 import '../models/drama.dart';
 import '../models/actor.dart';
-import 'actor_detail_page.dart';
 import '../services/api_service.dart';
 import '../data/shared_data.dart';
-import 'detail_page.dart'; 
+import '../widgets/edit_drama_modal.dart';
 
 class SearchPage extends StatefulWidget {
   final ApiService? apiService;
-  const SearchPage({super.key, this.apiService});
+  final SupabaseClient? supabaseClient;
+  const SearchPage({super.key, this.apiService, this.supabaseClient});
 
   @override
   State<SearchPage> createState() => _SearchPageState();
@@ -24,8 +26,29 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
 
   List<Drama> _allMedia = [];
   List<Drama> _displayedMedia = [];
+  List<int> savedMovieIds = [];
   int _searchToken = 0;
   bool _isLoadingOnline = false;
+
+  void _updateSavedMovieIds() {
+    savedMovieIds = SharedData.dramaListNotifier.value
+        .where((d) =>
+            d.status == 'Rencana Ditonton' ||
+            d.status == 'Sedang Menonton' ||
+            d.status == 'Selesai')
+        .map((d) => d.id)
+        .where((id) => id > 0)
+        .toList();
+  }
+
+  SupabaseClient? get _supabaseClient {
+    if (widget.supabaseClient != null) return widget.supabaseClient;
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   void initState() {
@@ -34,16 +57,92 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     _apiService = widget.apiService ?? ApiService();
     _actorsFuture = _apiService.getCuratedActors();
     _allMedia = List<Drama>.from(SharedData.dramaListNotifier.value);
+    _updateSavedMovieIds();
     _filterAndSortMedia();
+    _refreshWatchlistData();
+    _loadDefaultTmdbMedia();
     SharedData.dramaListNotifier.addListener(_onDramaListChanged);
   }
 
+  Future<void> _refreshWatchlistData() async {
+    try {
+      final client = _supabaseClient;
+      if (client != null && client.auth.currentUser != null) {
+        await SharedData.fetchUserWatchlist(client: client);
+        _updateSavedMovieIds();
+        if (mounted) {
+          setState(() {});
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Memuat daftar film/drama default langsung dari TMDB API saat kolom pencarian kosong
+  Future<void> _loadDefaultTmdbMedia() async {
+    final token = ++_searchToken;
+    setState(() {
+      _isLoadingOnline = true;
+    });
+
+    try {
+      List<Drama> defaultMedia = [];
+      if (_selectedCategory == 'Film') {
+        defaultMedia = await _apiService.getMovies();
+      } else if (_selectedCategory == 'Drama') {
+        defaultMedia = await _apiService.getDramas();
+      } else if (_selectedCategory == 'Anime') {
+        defaultMedia = await _apiService.getAnimes();
+      } else {
+        // 'Semua': Ambil trending all/day atau gabungan popular movie & tv
+        try {
+          defaultMedia = await _apiService.getTrendingAllMix(limit: 40);
+        } catch (_) {
+          defaultMedia = [];
+        }
+        if (defaultMedia.isEmpty) {
+          final results = await Future.wait([
+            _apiService.getMovies(),
+            _apiService.getDramas(),
+          ]);
+          defaultMedia = [...results[0], ...results[1]];
+        }
+      }
+
+      if (token != _searchToken || !mounted) return;
+
+      if (defaultMedia.isNotEmpty) {
+        _allMedia = defaultMedia;
+      } else {
+        // Fallback untuk offline atau unit test jika mock TMDB kosong
+        _allMedia = List<Drama>.from(SharedData.dramaListNotifier.value);
+      }
+
+      setState(() {
+        _isLoadingOnline = false;
+        _filterAndSortMedia();
+      });
+    } catch (_) {
+      if (token == _searchToken && mounted) {
+        if (_allMedia.isEmpty) {
+          _allMedia = List<Drama>.from(SharedData.dramaListNotifier.value);
+        }
+        setState(() {
+          _isLoadingOnline = false;
+          _filterAndSortMedia();
+        });
+      }
+    }
+  }
+
   void _onDramaListChanged() {
+    _updateSavedMovieIds();
     if (mounted) {
       setState(() {
-        _allMedia = List<Drama>.from(SharedData.dramaListNotifier.value);
-        if (_searchQuery.isEmpty) {
-          _filterAndSortMedia();
+        if (_allMedia.isEmpty) {
+          _allMedia = List<Drama>.from(SharedData.dramaListNotifier.value);
+          if (_searchQuery.isEmpty) {
+            _filterAndSortMedia();
+          }
         }
       });
     }
@@ -59,6 +158,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
         _actorsFuture = _apiService.getCuratedActors();
         _isLoadingOnline = false;
       });
+      _loadDefaultTmdbMedia();
       return;
     }
 
@@ -165,16 +265,113 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     _applySort();
   }
 
-  void _applySort() {
-    if (_selectedSort == 'Peringkat Teratas' ||
-        _selectedSort == 'Rating Tertinggi') {
-      _displayedMedia.sort((a, b) => b.voteAverage.compareTo(a.voteAverage));
-    } else if (_selectedSort == 'Tahun Rilis') {
-      _displayedMedia.sort((a, b) => b.releaseDate.compareTo(a.releaseDate));
-    } else if (_selectedSort == 'Paling Populer' ||
-        _selectedSort == 'Kepopuleran') {
-      _displayedMedia.sort((a, b) => b.popularity.compareTo(a.popularity));
+  String _cleanString(String s) {
+    return s
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'[^\w\s]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  int _calculateRelevanceScore(Drama drama, String qClean) {
+    if (qClean.isEmpty) return 99;
+
+    final String title = drama.title.trim().toLowerCase();
+    final String korean = drama.koreanTitle.trim().toLowerCase();
+    final String titleClean = _cleanString(title);
+    final String koreanClean = _cleanString(korean);
+
+    // 0. Exact match judul utama
+    if (titleClean == qClean || title == qClean) {
+      return 0;
     }
+    // 1. Exact match judul alternatif / Korea
+    if (koreanClean == qClean || korean == qClean) {
+      return 1;
+    }
+
+    // 2. Judul utama diawali dengan kata kunci persis
+    if (titleClean.startsWith(qClean) || title.startsWith(qClean)) {
+      return 2;
+    }
+    // 3. Judul Korea diawali dengan kata kunci persis
+    if (koreanClean.startsWith(qClean) || korean.startsWith(qClean)) {
+      return 3;
+    }
+
+    // 4. Kata kunci cocok sebagai satu kata/frasa utuh di judul
+    final wordPattern = RegExp('\\b${RegExp.escape(qClean)}\\b');
+    if (wordPattern.hasMatch(titleClean)) {
+      return 4;
+    }
+    if (wordPattern.hasMatch(koreanClean)) {
+      return 5;
+    }
+
+    // 6. Judul mengandung kata kunci
+    if (titleClean.contains(qClean) || title.contains(qClean)) {
+      return 6;
+    }
+    if (koreanClean.contains(qClean) || korean.contains(qClean)) {
+      return 7;
+    }
+
+    // 8. Seluruh kata dalam kata kunci ada dalam judul
+    final tokens = qClean.split(' ').where((t) => t.isNotEmpty).toList();
+    if (tokens.isNotEmpty && tokens.every((t) => titleClean.contains(t))) {
+      return 8;
+    }
+
+    return 99;
+  }
+
+  void _applySort() {
+    final rawQuery = _searchQuery.trim().toLowerCase();
+    final qClean = _cleanString(rawQuery);
+
+    _displayedMedia.sort((a, b) {
+      // 1. Prioritaskan relevansi pencarian jika pengguna mengetikkan kata kunci
+      if (qClean.isNotEmpty) {
+        final scoreA = _calculateRelevanceScore(a, qClean);
+        final scoreB = _calculateRelevanceScore(b, qClean);
+
+        // Pertahankan exact match di paling atas (indeks 0) jika ada
+        if (scoreA == 0 || scoreB == 0) {
+          if (scoreA != scoreB) {
+            return scoreA.compareTo(scoreB);
+          }
+        }
+
+        // Urutkan berdasarkan nilai rating (vote_average) tertinggi di paling atas (descending)
+        final ratingCmp = b.voteAverage.compareTo(a.voteAverage);
+        if (ratingCmp != 0) return ratingCmp;
+
+        if (scoreA != scoreB) {
+          return scoreA.compareTo(scoreB);
+        }
+
+        // Jika rating sama persis, utamakan yang selisih panjangnya paling dekat
+        final lenDiffA = (_cleanString(a.title).length - qClean.length).abs();
+        final lenDiffB = (_cleanString(b.title).length - qClean.length).abs();
+        if (lenDiffA != lenDiffB) {
+          return lenDiffA.compareTo(lenDiffB);
+        }
+      }
+
+      // 2. Kriteria sorting sekunder atau saat kata kunci pencarian kosong
+      if (_selectedSort == 'Peringkat Teratas' ||
+          _selectedSort == 'Rating Tertinggi') {
+        return b.voteAverage.compareTo(a.voteAverage);
+      } else if (_selectedSort == 'Tahun Rilis') {
+        return b.releaseDate.compareTo(a.releaseDate);
+      } else if (_selectedSort == 'Paling Populer' ||
+          _selectedSort == 'Kepopuleran') {
+        return b.popularity.compareTo(a.popularity);
+      }
+
+      // Default pengurutan hasil pencarian: rating tertinggi ke terendah (descending)
+      return b.voteAverage.compareTo(a.voteAverage);
+    });
   }
 
   @override
@@ -205,7 +402,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                 children: [
                   IconButton(
                     icon: Icon(Icons.arrow_back, color: textColor),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => context.pop(),
                   ),
                   Expanded(
                     child: Container(
@@ -379,9 +576,11 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                           if (_searchQuery.isNotEmpty) {
                             _performOnlineJudulSearch(
                                 _searchQuery, ++_searchToken);
+                          } else {
+                            _loadDefaultTmdbMedia();
                           }
                         });
-                        Navigator.pop(ctx);
+                        ctx.pop();
                       },
                       child: const Text(
                         'Terapkan',
@@ -508,7 +707,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                           _selectedSort = tempSort;
                           _applySort();
                         });
-                        Navigator.pop(ctx);
+                        ctx.pop();
                       },
                       child: const Text(
                         'Terapkan',
@@ -561,8 +760,25 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
     );
   }
 
+  String _formatMovieDuration(Drama drama) {
+    if (drama.runtime != null && drama.runtime! > 0) {
+      final h = drama.runtime! ~/ 60;
+      final m = drama.runtime! % 60;
+      if (h > 0 && m > 0) return '${h}j ${m}m';
+      if (h > 0) return '${h}j';
+      return '${m}m';
+    }
+    final d = drama.duration.trim();
+    if (d.isNotEmpty &&
+        d != '-' &&
+        d != '0' &&
+        !d.toLowerCase().contains('0 menit')) {
+      return d;
+    }
+    return '';
+  }
+
   Widget _buildJudulTab(Color cardColor, Color textColor, Color subTextColor) {
-    bool isDark = Theme.of(context).brightness == Brightness.dark;
     Color primaryBlue = const Color(0xFF0094FF);
 
     if (_isLoadingOnline && _displayedMedia.isEmpty) {
@@ -604,111 +820,229 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      physics: const BouncingScrollPhysics(),
-      itemCount: _displayedMedia.length,
-      itemBuilder: (context, index) {
-        final Drama item = _displayedMedia[index];
-        final String heroTag = 'poster_${item.id > 0 ? item.id : item.title}';
-        
-        // LOGIKA CERDAS: Cek apakah film sudah masuk daftar tonton
-        bool isInWatchlist = ['Selesai', 'Sedang Menonton', 'Rencana Ditonton'].contains(item.status);
-        
-        return GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => DetailPage(
-                  drama: item,
-                  heroTag: heroTag,
-                  posterUrl: item.image,
+    return ValueListenableBuilder<List<Drama>>(
+      valueListenable: SharedData.dramaListNotifier,
+      builder: (context, userWatchlist, _) {
+        final bool isDark = Theme.of(context).brightness == Brightness.dark;
+        final Color actionBtnBg = isDark
+            ? Colors.white.withValues(alpha: 0.07)
+            : Colors.black.withValues(alpha: 0.06);
+        final Color actionIconColor = isDark ? Colors.white70 : Colors.black87;
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          physics: const BouncingScrollPhysics(),
+          itemCount: _displayedMedia.length,
+          itemBuilder: (context, index) {
+            final Drama item = _displayedMedia[index];
+            final String heroTag = 'poster_${item.id > 0 ? item.id : item.title}';
+
+            final bool isFilm = item.mediaType == 'movie' ||
+                (item.mediaType != 'tv' &&
+                    (item.isMovie || item.genre.toLowerCase().contains('film')));
+            final String movieDuration = isFilm ? _formatMovieDuration(item) : '';
+            final String year = item.releaseDate.isNotEmpty
+                ? item.releaseDate.split('-')[0]
+                : (item.date.isNotEmpty
+                    ? item.date.split('-')[0]
+                    : (item.aired.isNotEmpty ? item.aired.split('-')[0] : ''));
+
+            final String categoryLabel = Drama.getCategoryLabel(
+              mediaType: item.mediaType,
+              originalLanguage: item.originalLanguage,
+              genreIds: item.genreIds,
+              drama: item,
+            );
+            final String subtitle = year.isNotEmpty
+                ? '$categoryLabel â€¢ $year'
+                : categoryLabel;
+
+            final int tmdbId = item.id;
+            final String tmdbIdStr = tmdbId.toString();
+
+            // Memperbarui dan menggunakan savedMovieIds (berdasarkan tmdb_id numerik)
+            savedMovieIds = userWatchlist
+                .where((d) =>
+                    d.status == 'Rencana Ditonton' ||
+                    d.status == 'Sedang Menonton' ||
+                    d.status == 'Selesai')
+                .map((d) => d.id)
+                .where((id) => id > 0)
+                .toList();
+
+            // Pengecekan status tersimpan strictly menggunakan ID, BUKAN membandingkan judul film
+            final bool isSavedInWatchlist = item.id > 0 && savedMovieIds.contains(item.id);
+
+            Drama? matchedWatchlist;
+            if (isSavedInWatchlist) {
+              for (final d in userWatchlist) {
+                final bool hasValidStatus = d.status == 'Rencana Ditonton' ||
+                    d.status == 'Sedang Menonton' ||
+                    d.status == 'Selesai';
+                if (!hasValidStatus) continue;
+
+                final int wId = d.id;
+                final String wIdStr = wId.toString();
+
+                // Cocokkan strictly id item TMDB dengan watchlist dalam tipe int maupun String
+                final bool idMatches = (tmdbId > 0 && wId > 0 && tmdbId == wId) ||
+                    (tmdbIdStr.isNotEmpty && tmdbIdStr != '0' && tmdbIdStr == wIdStr);
+
+                if (idMatches) {
+                  matchedWatchlist = d;
+                  break;
+                }
+              }
+            }
+
+            final int displayEpisodes = matchedWatchlist != null && matchedWatchlist.episodes > 0
+                ? matchedWatchlist.episodes
+                : item.episodes;
+
+            return GestureDetector(
+              onTap: () async {
+                await context.push(
+                  '/movie/${item.id}',
+                  extra: {
+                    'drama': item,
+                    'heroTag': heroTag,
+                    'posterUrl': item.image,
+                  },
+                );
+                await _refreshWatchlistData();
+                if (mounted) setState(() {});
+              },
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Hero(
+                      tag: heroTag,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          item.image, 
+                          width: 60, 
+                          height: 85, 
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(width: 60, height: 85, color: Colors.grey.shade800),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.title, style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          const SizedBox(height: 6),
+                          Text(subtitle, style: TextStyle(color: subTextColor, fontSize: 12)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Icon(Icons.star, color: Colors.amber, size: 14),
+                              const SizedBox(width: 4),
+                              Text(
+                                item.rating.toStringAsFixed(1), 
+                                style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold)
+                              ),
+                              if (!isFilm) ...[
+                                if (displayEpisodes > 0) ...[
+                                  const SizedBox(width: 12),
+                                  Icon(Icons.list_alt, color: subTextColor, size: 14),
+                                  const SizedBox(width: 4),
+                                  Text('$displayEpisodes', style: TextStyle(color: subTextColor, fontSize: 13)),
+                                ],
+                              ] else if (movieDuration.isNotEmpty) ...[
+                                const SizedBox(width: 12),
+                                Icon(Icons.access_time, color: subTextColor, size: 14),
+                                const SizedBox(width: 4),
+                                Text(movieDuration, style: TextStyle(color: subTextColor, fontSize: 13)),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    // KOTAK TOMBOL AKSI (+ dan Pena/Pensil)
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () async {
+                          if (matchedWatchlist != null) {
+                            final savedItem = matchedWatchlist;
+                            final dramaToEdit = item.copyWith(
+                              status: savedItem.status,
+                              watchedEpisodes: savedItem.watchedEpisodes,
+                              episodes: savedItem.episodes > 0
+                                  ? savedItem.episodes
+                                  : item.episodes,
+                              myRating: savedItem.userRating ??
+                                  savedItem.myRating,
+                              userRating: savedItem.userRating ??
+                                  savedItem.myRating,
+                              priority: savedItem.priority,
+                              startDate: savedItem.startDate,
+                              endDate: savedItem.endDate,
+                              dateCompleted: savedItem.dateCompleted,
+                            );
+
+                            await showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (context) => EditDramaModal(
+                                drama: dramaToEdit,
+                                initialStatus: savedItem.status,
+                              ),
+                            );
+                          } else {
+                            await showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.transparent,
+                              builder: (context) => EditDramaModal(
+                                drama: item,
+                                initialStatus: 'Belum Ditonton',
+                              ),
+                            );
+                          }
+
+                          await _refreshWatchlistData();
+                          if (mounted) {
+                            setState(() {});
+                          }
+                        },
+                        child: Container(
+                          width: 38,
+                          height: 38,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: actionBtnBg,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            savedMovieIds.contains(item.id)
+                                ? Icons.edit_outlined
+                                : Icons.add,
+                            color: actionIconColor,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
           },
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Hero(
-                  tag: heroTag,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      item.image, 
-                      width: 60, 
-                      height: 85, 
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(width: 60, height: 85, color: Colors.grey.shade800),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(item.title, style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 6),
-                      Text('${item.genre.split('•')[0].trim()}  •  2025', style: TextStyle(color: subTextColor, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const Icon(Icons.star, color: Colors.amber, size: 14),
-                          const SizedBox(width: 4),
-                          Text(
-                            item.rating.toStringAsFixed(1), 
-                            style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold)
-                          ),
-                          const SizedBox(width: 12),
-                          Icon(Icons.list_alt, color: subTextColor, size: 14),
-                          const SizedBox(width: 4),
-                          Text('${item.episodes}', style: TextStyle(color: subTextColor, fontSize: 13)),
-                          const SizedBox(width: 12),
-                          Icon(Icons.trending_up, color: subTextColor, size: 14),
-                          const SizedBox(width: 4),
-                          Text('#${index + 1}', style: TextStyle(color: subTextColor, fontSize: 13)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                
-                // TOMBOL DINAMIS: PENA (EDIT) ATAU PLUS (TAMBAH)
-                GestureDetector(
-                  onTap: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (context) => EditDramaModal(drama: item),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: isInWatchlist
-                          ? (isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade100)
-                          : primaryBlue.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      isInWatchlist ? Icons.edit : Icons.add, 
-                      color: isInWatchlist ? subTextColor : primaryBlue, 
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         );
       },
     );
@@ -852,16 +1186,14 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
 
             return GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ActorDetailPage(
-                      actor,
-                      apiService: _apiService,
-                      heroTag: actorHeroTag,
-                      imageUrl: actor.imageUrl,
-                    ),
-                  ),
+                context.push(
+                  '/actor/${actor.id}',
+                  extra: {
+                    'actor': actor,
+                    'apiService': _apiService,
+                    'heroTag': actorHeroTag,
+                    'imageUrl': actor.imageUrl,
+                  },
                 );
               },
               child: Container(
@@ -986,4 +1318,4 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
       },
     );
   }
-}
+}

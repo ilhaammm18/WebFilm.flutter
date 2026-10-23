@@ -19,12 +19,13 @@ Color getRatingColor(double rating) {
   }
 }
 
-/// 2. Fungsi getDynamicLabel()
-/// Aturan spesifikasi:
-/// - Jika 'tv' & 'KR' -> 'Drama Korea'
-/// - Jika 'tv' & 'JP' & genre 16 -> 'Anime'
-/// - Jika 'movie' & 'ko' -> 'Film Korea'
-/// Serta mendukung kategori pendukung ('Film Jepang', 'Drama Jepang', 'Film Barat', 'Drama Barat').
+/// 2. Fungsi getDynamicLabel() / getCustomCategory()
+/// Aturan penentuan kategori kustom:
+/// - Jika original_language adalah 'ko'/'kr' dan tipenya 'tv' -> 'Drama Korea'
+/// - Jika original_language adalah 'ko'/'kr' dan tipenya 'movie' -> 'Film Korea'
+/// - Jika original_language adalah 'en'/'us' (Inggris/Barat) dan tipenya 'tv' -> 'Drama Barat'
+/// - Jika original_language adalah 'en'/'us' (Inggris/Barat) dan tipenya 'movie' -> 'Film Barat'
+/// Serta mendukung kategori pendukung ('Anime', 'Drama Jepang', 'Film Jepang').
 String getDynamicLabel({
   String? mediaType,
   String? originalLanguage,
@@ -33,64 +34,26 @@ String getDynamicLabel({
   List<String>? genres,
   Drama? drama,
 }) {
-  final String type =
-      (drama != null ? drama.mediaType : (mediaType ?? 'tv')).toLowerCase();
-  final String lang = (originalLanguage ??
-          drama?.originalLanguage ??
-          originCountry ??
-          '')
-      .toUpperCase();
+  return Drama.getCategoryLabel(
+    mediaType: mediaType,
+    originalLanguage: originalLanguage ?? originCountry,
+    genreIds: genreIds?.map((e) => (e as num).toInt()).toList(),
+    genres: genres,
+    drama: drama,
+  );
+}
 
-  final List<dynamic> gIds = genreIds ?? drama?.genreIds ?? [];
-  final bool hasAnimeGenre = gIds.contains(16) ||
-      (genres?.any((g) => g.toLowerCase().contains('anime')) ?? false) ||
-      (drama?.genre.toLowerCase().contains('anime') ?? false) ||
-      (drama?.genresList.any((g) => g.toLowerCase().contains('anime')) ?? false);
-
-  final bool isKorean = lang == 'KR' ||
-      lang == 'KO' ||
-      (drama?.genre.toLowerCase().contains('korea') ?? false);
-  final bool isJapanese = lang == 'JP' ||
-      lang == 'JA' ||
-      (drama?.genre.toLowerCase().contains('jepang') ?? false) ||
-      (drama?.genre.toLowerCase().contains('japan') ?? false) ||
-      hasAnimeGenre;
-
-  // 1. Jika 'tv' & 'KR' -> 'Drama Korea'
-  if (type == 'tv' && isKorean) {
-    return 'Drama Korea';
-  }
-
-  // 2. Jika 'tv' & 'JP' & genre 16 -> 'Anime'
-  if (type == 'tv' &&
-      (isJapanese || lang == 'JP' || lang == 'JA') &&
-      hasAnimeGenre) {
-    return 'Anime';
-  }
-
-  // 3. Jika 'movie' & 'ko' -> 'Film Korea'
-  if (type == 'movie' && (lang == 'KO' || isKorean)) {
-    return 'Film Korea';
-  }
-
-  // Tambahan kategori pendukung
-  if (type == 'movie' && (lang == 'JA' || lang == 'JP' || isJapanese)) {
-    return 'Film Jepang';
-  }
-  if (type == 'tv' && (lang == 'JA' || lang == 'JP' || isJapanese)) {
-    return 'Drama Jepang';
-  }
-  if (type == 'movie' && (lang == 'EN' || lang == 'US')) {
-    return 'Film Barat';
-  }
-  if (type == 'tv' && (lang == 'EN' || lang == 'US')) {
-    return 'Drama Barat';
-  }
-
-  if (type == 'movie') {
-    return 'Film';
-  }
-  return 'Drama';
+/// Helper untuk menentukan kategori kustom berdasarkan data TMDB atau Supabase
+String getCustomCategory({
+  Drama? drama,
+  String? originalLanguage,
+  String? mediaType,
+}) {
+  return getDynamicLabel(
+    drama: drama,
+    originalLanguage: originalLanguage,
+    mediaType: mediaType,
+  );
 }
 
 /// 3. Fungsi getActorNationality()
@@ -197,3 +160,89 @@ String formatDate(dynamic date) {
   final yyyy = parsedDate.year.toString();
   return '$dd/$mm/$yyyy';
 }
+
+/// 8. Kamus Terjemahan Jabatan/Departemen Tim Produksi (Crew) TMDB ke Bahasa Indonesia
+const Map<String, String> crewJobTranslations = {
+  // Directing
+  'Director': 'Sutradara',
+  'Directing': 'Sutradara',
+  'Co-Director': 'Ko-Sutradara',
+  'Assistant Director': 'Asisten Sutradara',
+
+  // Writing
+  'Writer': 'Penulis',
+  'Writing': 'Penulis',
+  'Screenplay': 'Penulis Skenario',
+  'Story': 'Penulis Cerita',
+  'Novel': 'Penulis Novel',
+  'Author': 'Penulis',
+  'Characters': 'Karakter',
+
+  // Producing
+  'Producer': 'Produser',
+  'Production': 'Produksi',
+  'Executive Producer': 'Produser Eksekutif',
+  'Co-Producer': 'Ko-Produser',
+  'Line Producer': 'Produser Lini',
+  'Associate Producer': 'Produser Madya',
+
+  // Music & Sound
+  'Original Music Composer': 'Komposer',
+  'Composer': 'Komposer',
+  'Music': 'Musik',
+  'Sound': 'Tata Suara',
+  'Sound Designer': 'Penata Suara',
+  'Sound Mixer': 'Penata Suara',
+  'Sound Editor': 'Editor Suara',
+
+  // Editing
+  'Editor': 'Editor',
+  'Editing': 'Editor',
+
+  // Camera & Cinematography
+  'Director of Photography': 'Sinematografer',
+  'Cinematography': 'Sinematografer',
+  'Camera': 'Kamera',
+
+  // Art & Design
+  'Production Design': 'Desain Produksi',
+  'Art Direction': 'Pengarah Artistik',
+  'Costume Design': 'Desainer Kostum',
+  'Costume Designer': 'Desainer Kostum',
+  'Makeup Artist': 'Penata Rias',
+  'Make-up Artist': 'Penata Rias',
+
+  // Visual Effects
+  'Visual Effects': 'Efek Visual',
+  'VFX Supervisor': 'Pengawas Efek Visual',
+
+  // Creator
+  'Creator': 'Kreator',
+};
+
+/// Menerjemahkan jabatan atau departemen tim (kru) ke bahasa Indonesia.
+/// Jika teks tidak ada di dalam kamus, teks aslinya akan ditampilkan.
+String translateCrewRole(String? role) {
+  if (role == null || role.trim().isEmpty) return '';
+  final trimmed = role.trim();
+
+  // 1. Cek exact match
+  if (crewJobTranslations.containsKey(trimmed)) {
+    return crewJobTranslations[trimmed]!;
+  }
+
+  // 2. Cek case-insensitive
+  final lower = trimmed.toLowerCase();
+  for (final entry in crewJobTranslations.entries) {
+    if (entry.key.toLowerCase() == lower) {
+      return entry.value;
+    }
+  }
+
+  // 3. Fallback: tampilkan teks aslinya
+  return trimmed;
+}
+
+/// Alias helper function untuk translateCrewRole
+String translateCrewJob(String? job) => translateCrewRole(job);
+

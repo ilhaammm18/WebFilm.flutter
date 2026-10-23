@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:tugas_pbp/models/actor.dart';
 import 'package:tugas_pbp/screens/actor_detail_page.dart';
+import 'package:tugas_pbp/screens/detail_page.dart';
 import 'package:tugas_pbp/screens/search_page.dart';
 import 'package:tugas_pbp/services/api_service.dart';
 
@@ -242,6 +243,63 @@ void main() {
       expect(find.text('Big Mouth'), findsOneWidget);
       expect(find.text('2022'), findsOneWidget);
       expect(find.text('Park Chang-ho'), findsOneWidget);
+    });
+
+    testWidgets('Kartu filmografi dibungkus InkWell dan mengetuknya bernavigasi ke MovieDetailPage', (tester) async {
+      const testActor = Actor(
+        id: 101,
+        name: 'Lee Jong Suk',
+        birthDate: '14 September 1989',
+        placeOfBirth: 'Suwon, Gyeonggi Province, South Korea',
+      );
+
+      final mockClient = MockClient((request) async {
+        if (request.url.path.contains('/combined_credits')) {
+          final mockCredits = {
+            'cast': [
+              {
+                'id': 1001,
+                'title': 'Big Mouth',
+                'poster_path': '/bigmouth.jpg',
+                'release_date': '2022-07-29',
+                'character': 'Park Chang-ho',
+              },
+            ]
+          };
+          return http.Response(
+            json.encode(mockCredits),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('{"id": 1001}', 200, headers: {'content-type': 'application/json; charset=utf-8'});
+      });
+
+      final mockApiService = ApiService(client: mockClient);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ActorDetailPage(testActor, apiService: mockApiService),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verifikasi InkWell ada pada kartu filmografi
+      final inkWellFinder = find.widgetWithText(InkWell, 'Big Mouth');
+      expect(inkWellFinder, findsOneWidget);
+
+      final InkWell inkWell = tester.widget(inkWellFinder);
+      expect(inkWell.borderRadius, BorderRadius.circular(12));
+
+      // Gulir agar kartu film terlihat pada layar tes dan ketuk
+      await tester.ensureVisible(inkWellFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(inkWellFinder);
+      await tester.pumpAndSettle();
+
+      // Memeriksa bahwa telah bernavigasi ke halaman detail film
+      expect(find.byType(DetailPage), findsOneWidget);
+      expect(find.text('Big Mouth'), findsWidgets);
     });
   });
 

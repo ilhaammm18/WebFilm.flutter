@@ -5,6 +5,7 @@ class Actor {
   final String koreanName;
   final String nationality;
   final String? birthday;
+  final String? deathday;
   final String? placeOfBirth;
   final String birthDate;
   final int age;
@@ -18,6 +19,7 @@ class Actor {
   final double? popularity;
   final String? knownForDepartment;
   final List<dynamic>? knownFor;
+  final String? biography;
 
   const Actor({
     this.id = 0,
@@ -27,6 +29,7 @@ class Actor {
     String? nationality,
     String? birthDate,
     this.birthday,
+    this.deathday,
     this.placeOfBirth,
     int? age,
     String? imageUrl,
@@ -39,6 +42,7 @@ class Actor {
     this.popularity,
     this.knownForDepartment,
     this.knownFor,
+    this.biography,
   })  : koreanName = koreanName ?? '',
         nationality = nationality ?? 'Internasional',
         birthDate = birthDate ?? (birthday ?? '-'),
@@ -66,6 +70,10 @@ class Actor {
   // ignore: non_constant_identifier_names
   String? get known_for_department => knownForDepartment;
 
+  /// Getter alias untuk deathday sesuai spesifikasi TMDB
+  // ignore: non_constant_identifier_names
+  String? get death_day => deathday;
+
   /// URL lengkap gambar profil TMDB (https://image.tmdb.org/t/p/w500)
   String get imageUrl {
     if (profilePath != null && profilePath!.isNotEmpty) {
@@ -81,7 +89,9 @@ class Actor {
     final String dept = json['known_for_department'] as String? ?? 'Acting';
     final List<dynamic>? knownFor = json['known_for'] as List<dynamic>?;
     final String? birthday = json['birthday'] as String?;
+    final String? deathday = json['deathday'] as String?;
     final String? placeOfBirth = json['place_of_birth'] as String?;
+    final String? biography = json['biography'] as String?;
 
     String nat = dept == 'Acting' ? 'Aktor / Aktris' : dept;
     if (knownFor != null && knownFor.isNotEmpty) {
@@ -113,11 +123,13 @@ class Actor {
       nationality: nat,
       birthDate: birthday ?? '-',
       birthday: birthday,
+      deathday: deathday,
       placeOfBirth: placeOfBirth,
       age: 0,
       popularity: pop,
       knownForDepartment: dept,
       knownFor: knownFor,
+      biography: biography,
       flowers: pop != null ? (pop * 100).toInt() : 1250,
       likes: pop != null ? (pop * 250).toInt() : 3500,
       rank: pop != null ? '#${pop.toInt()}' : '-',
@@ -216,6 +228,161 @@ class ActorCredit {
     );
   }
 }
+
+// ==========================================
+// MODEL CREW MEMBER (TIM PRODUKSI DARI TMDB)
+// ==========================================
+class MovieCrewMember {
+  final int id;
+  final String name;
+  final String job;
+  final String department;
+  final String? profilePath;
+
+  const MovieCrewMember({
+    required this.id,
+    required this.name,
+    required this.job,
+    this.department = '',
+    this.profilePath,
+  });
+
+  String get profileUrl => (profilePath != null && profilePath!.isNotEmpty)
+      ? 'https://image.tmdb.org/t/p/w500$profilePath'
+      : '';
+
+  factory MovieCrewMember.fromJson(Map<String, dynamic> json) {
+    return MovieCrewMember(
+      id: json['id'] as int? ?? 0,
+      name: json['name'] as String? ?? (json['original_name'] as String? ?? 'Nama Tim'),
+      job: json['job'] as String? ?? (json['department'] as String? ?? 'Kru'),
+      department: json['department'] as String? ?? '',
+      profilePath: json['profile_path'] as String?,
+    );
+  }
+}
+
+// ==========================================
+// MODEL WATCH PROVIDER (TEMPAT MENONTON TMDB)
+// ==========================================
+class WatchProvider {
+  final int id;
+  final String name;
+  final String? logoPath;
+
+  /// Tipe ketersediaan dari TMDB: flatrate, free, ads, rent, buy
+  final String type;
+
+  const WatchProvider({
+    required this.id,
+    required this.name,
+    this.logoPath,
+    this.type = 'flatrate',
+  });
+
+  String get logoUrl => (logoPath != null && logoPath!.isNotEmpty)
+      ? 'https://image.tmdb.org/t/p/w500$logoPath'
+      : '';
+
+  /// Label tipe ketersediaan dalam Bahasa Indonesia
+  String get typeLabel {
+    switch (type) {
+      case 'free':
+        return 'Gratis';
+      case 'ads':
+        return 'Gratis (Iklan)';
+      case 'rent':
+        return 'Sewa';
+      case 'buy':
+        return 'Beli';
+      case 'flatrate':
+      default:
+        return 'Langganan';
+    }
+  }
+
+  factory WatchProvider.fromJson(Map<String, dynamic> json,
+      {String type = 'flatrate'}) {
+    return WatchProvider(
+      id: json['provider_id'] as int? ?? 0,
+      name: json['provider_name'] as String? ?? '',
+      logoPath: json['logo_path'] as String?,
+      type: type,
+    );
+  }
+}
+
+// ==========================================
+// HASIL CREDITS (CAST & CREW)
+// ==========================================
+class MovieCreditsResult {
+  final List<ActorCredit> cast;
+  final List<MovieCrewMember> crew;
+
+  const MovieCreditsResult({
+    this.cast = const [],
+    this.crew = const [],
+  });
+}
+
+// ==========================================
+// MOCK DATA CREW & PROVIDERS
+// ==========================================
+final List<MovieCrewMember> dummyCrew = [
+  const MovieCrewMember(
+    id: 1,
+    name: 'Bong Joon-ho',
+    job: 'Sutradara',
+    department: 'Directing',
+  ),
+  const MovieCrewMember(
+    id: 2,
+    name: 'Han Jin-won',
+    job: 'Penulis',
+    department: 'Writing',
+  ),
+  const MovieCrewMember(
+    id: 3,
+    name: 'Kwak Sin-ae',
+    job: 'Produser',
+    department: 'Production',
+  ),
+  const MovieCrewMember(
+    id: 4,
+    name: 'Hong Kyung-pyo',
+    job: 'Sinematografi',
+    department: 'Camera',
+  ),
+  const MovieCrewMember(
+    id: 5,
+    name: 'Jung Jae-il',
+    job: 'Musik',
+    department: 'Sound',
+  ),
+];
+
+final List<WatchProvider> dummyProviders = [
+  const WatchProvider(
+    id: 8,
+    name: 'Netflix',
+    logoPath: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg',
+  ),
+  const WatchProvider(
+    id: 390,
+    name: 'Disney Plus',
+    logoPath: '/7rwgEs15tFwyR9NPQ5vpzxTj19Q.jpg',
+  ),
+  const WatchProvider(
+    id: 188,
+    name: 'Vidio',
+    logoPath: '/k2fHkR1N7UuF1e4pA9FhN9W3g3m.jpg',
+  ),
+  const WatchProvider(
+    id: 119,
+    name: 'Prime Video',
+    logoPath: '/emthp39XA2qquiHNr22vFarAFvP.jpg',
+  ),
+];
 
 // ==========================================
 // MOCK DATA (DATA DUMMY AKTOR TERKENAL DENGAN ID TMDB RIIL)

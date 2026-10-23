@@ -1,7 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../routes/app_router.dart';
 import '../models/drama.dart';
 import '../services/api_service.dart';
-import 'detail_page.dart';
 
 class GenreDetailPage extends StatefulWidget {
   final String genreName;
@@ -46,7 +46,7 @@ class _GenreDetailPageState extends State<GenreDetailPage> {
         centerTitle: false,
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: textColor),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => context.pop(),
         ),
         title: Text(
           widget.genreName,
@@ -105,16 +105,14 @@ class _GenreDetailPageState extends State<GenreDetailPage> {
 
               return GestureDetector(
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => DetailPage(
-                        drama: item,
-                        apiService: _apiService,
-                        heroTag: heroTag,
-                        posterUrl: item.image,
-                      ),
-                    ),
+                  context.push(
+                    '/movie/${item.id}',
+                    extra: {
+                      'drama': item,
+                      'apiService': _apiService,
+                      'heroTag': heroTag,
+                      'posterUrl': item.image,
+                    },
                   );
                 },
                 child: Column(
@@ -171,7 +169,7 @@ class _GenreDetailPageState extends State<GenreDetailPage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '$releaseYear • ★ ${item.rating.toStringAsFixed(1)}',
+                      '$releaseYear â€¢ â˜… ${item.rating.toStringAsFixed(1)}',
                       style: TextStyle(
                         color: subTextColor,
                         fontSize: 11,

@@ -114,6 +114,18 @@ void main() {
       // Verifikasi EditDramaModal terbuka
       expect(find.byType(EditDramaModal), findsOneWidget);
 
+      // Komponen Episode tersembunyi saat status 'Rencana Ditonton'
+      expect(find.byIcon(Icons.add), findsNothing);
+
+      // Ubah status ke 'Sedang Menonton' agar komponen Episode tampil
+      await tester.tap(find.descendant(
+        of: find.byType(EditDramaModal),
+        matching: find.text('Rencana Ditonton'),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sedang Menonton').last);
+      await tester.pumpAndSettle();
+
       // Tambahkan 1 episode menggunakan tombol (+)
       final plusButton = find.byIcon(Icons.add);
       expect(plusButton, findsOneWidget);
@@ -133,7 +145,7 @@ void main() {
       expect(find.byType(EditDramaModal), findsNothing);
 
       // Verifikasi drama telah HILANG dari tab 'RENCANA DITONTON'
-      expect(find.text('Belum ada data untuk Rencana Ditonton'), findsOneWidget);
+      expect(find.text('Belum ada judul di daftar ini'), findsOneWidget);
       expect(find.text('My Mister'), findsNothing);
 
       // Sekarang pindah ke tab 'SEDANG MENONTON'
@@ -197,7 +209,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Verifikasi drama telah HILANG dari tab 'SEDANG MENONTON'
-      expect(find.text('Belum ada data untuk Sedang Menonton'), findsOneWidget);
+      expect(find.text('Belum ada judul di daftar ini'), findsOneWidget);
 
       // Pindah ke tab 'SELESAI'
       await tester.tap(find.text('SELESAI'));

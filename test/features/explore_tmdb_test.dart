@@ -7,6 +7,7 @@ import 'package:tugas_pbp/models/drama.dart';
 import 'package:tugas_pbp/data/shared_data.dart';
 import 'package:tugas_pbp/services/api_service.dart';
 import 'package:tugas_pbp/screens/explore_tab.dart';
+import 'package:tugas_pbp/screens/see_all_page.dart';
 
 void main() {
   setUp(() {
@@ -172,18 +173,19 @@ void main() {
   });
 
   group('ExploreTab FutureBuilder Tests', () {
-    testWidgets('ExploreTab menampilkan data TMDB pada Direkomendasikan dan Sedang Ditonton', (tester) async {
+    testWidgets('ExploreTab menampilkan 4 kategori baru Untuk Anda dan Seksi Dekade', (tester) async {
       final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/trending/movie/day')) {
+        if (request.url.path.contains('/trending/all/week')) {
           return http.Response(
             json.encode({
               'page': 1,
               'results': [
                 {
-                  'id': 501,
-                  'title': 'Film Trending Hari Ini',
-                  'poster_path': '/trend.jpg',
-                  'vote_average': 9.7,
+                  'id': 401,
+                  'title': 'Film Trending Minggu Ini',
+                  'poster_path': '/trend_week.jpg',
+                  'vote_average': 9.2,
+                  'media_type': 'movie',
                 },
               ],
             }),
@@ -191,16 +193,54 @@ void main() {
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
         }
-        if (request.url.path.contains('/movie/now_playing')) {
+        if (request.url.path.contains('/movie/top_rated')) {
+          return http.Response(
+            json.encode({
+              'page': 1,
+              'results': [
+                {
+                  'id': 501,
+                  'title': 'Film Rekomendasi Top',
+                  'poster_path': '/top.jpg',
+                  'vote_average': 9.5,
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (request.url.path.contains('/trending/all/day')) {
           return http.Response(
             json.encode({
               'page': 1,
               'results': [
                 {
                   'id': 601,
-                  'title': 'Film Tayang Bioskop',
-                  'poster_path': '/now.jpg',
-                  'vote_average': 8.1,
+                  'title': 'Film Trending Hari Ini',
+                  'poster_path': '/trend_day.jpg',
+                  'vote_average': 9.7,
+                  'media_type': 'movie',
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (request.url.path.contains('/movie/upcoming') ||
+            (request.url.path.contains('/discover/movie') &&
+                request.url.queryParameters['sort_by'] == 'primary_release_date.asc')) {
+          return http.Response(
+            json.encode({
+              'page': 1,
+              'results': [
+                {
+                  'id': 701,
+                  'title': 'Film Segera Hadir Nanti',
+                  'poster_path': '/upcoming.jpg',
+                  'vote_average': 8.4,
+                  'release_date': '2026-11-20',
                 },
               ],
             }),
@@ -214,7 +254,7 @@ void main() {
               'page': 1,
               'results': [
                 {
-                  'id': 701,
+                  'id': 801,
                   'name': 'Drama Populer TV',
                   'poster_path': '/tvpop.jpg',
                   'vote_average': 8.6,
@@ -231,7 +271,7 @@ void main() {
               'page': 1,
               'results': [
                 {
-                  'id': 801,
+                  'id': 901,
                   'title': 'Film Bioskop Populer',
                   'poster_path': '/moviepop.jpg',
                   'vote_average': 8.3,
@@ -248,7 +288,7 @@ void main() {
               'page': 1,
               'results': [
                 {
-                  'id': 901,
+                  'id': 1001,
                   'name': 'Anime Populer',
                   'poster_path': '/animepop.jpg',
                   'vote_average': 8.9,
@@ -275,17 +315,24 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Memeriksa header section
-      expect(find.text('Direkomendasikan Untuk Anda'), findsOneWidget);
-      expect(find.text('Sedang Ditonton Sekarang'), findsOneWidget);
+      // Memeriksa 4 header kategori baru dan seksi dekade
+      expect(find.text('Paling Banyak Ditambahkan Minggu Ini'), findsOneWidget);
+      expect(find.text('Rekomendasi Untuk Anda'), findsOneWidget);
+      expect(find.text('Trending Hari Ini'), findsOneWidget);
+      expect(find.text('Jelajahi Berdasarkan Dekade'), findsOneWidget);
+      expect(find.text('Segera Hadir'), findsOneWidget);
 
-      // Memeriksa judul film dari hasil TMDB API muncul di UI
+      // Memeriksa judul film dan tanggal rilis segera hadir muncul di UI
+      expect(find.text('Film Trending Minggu Ini'), findsOneWidget);
+      expect(find.text('Film Rekomendasi Top'), findsOneWidget);
       expect(find.text('Film Trending Hari Ini'), findsOneWidget);
-      expect(find.text('Film Tayang Bioskop'), findsOneWidget);
+      expect(find.text('Film Segera Hadir Nanti'), findsOneWidget);
+      expect(find.text('2026-11-20'), findsOneWidget);
 
-      // Memeriksa rating film muncul
-      expect(find.text('9.7'), findsOneWidget);
-      expect(find.text('8.1'), findsOneWidget);
+      // Memeriksa chips dekade muncul
+      expect(find.text('2020s'), findsOneWidget);
+      expect(find.text('2010s'), findsOneWidget);
+      expect(find.text('2000s'), findsOneWidget);
 
       // Menguji tab DRAMA memuat FutureBuilder
       await tester.tap(find.text('DRAMA'));
@@ -480,12 +527,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Cek Tab DRAMA: Opsi 'Semua', 'Korea (Drakor)', 'Jepang (Dorama)', 'Barat', 'China/Thai'
+      // Cek Tab DRAMA: Opsi 'Semua', 'Korea', 'Jepang', 'Barat', 'China/Thai'
       await tester.tap(find.text('DRAMA'));
       await tester.pumpAndSettle();
-      expect(find.text('Korea (Drakor)'), findsOneWidget);
-      expect(find.text('Jepang (Dorama)'), findsOneWidget);
-      expect(find.text('Barat'), findsOneWidget);
+      expect(find.text('Korea'), findsWidgets);
+      expect(find.text('Jepang'), findsWidgets);
+      expect(find.text('Barat'), findsWidgets);
       expect(find.text('China/Thai'), findsOneWidget);
 
       // Cek Tab FILM: Opsi 'Semua', 'Indonesia', 'Barat', 'Korea', 'Jepang'
@@ -539,6 +586,59 @@ void main() {
 
       await apiService.getAnimationTvShows(originalLanguage: 'zh');
       expect(requestedUrls[4], contains('with_original_language=zh'));
+    });
+
+    testWidgets('ExploreTab: Header bagian memiliki ikon chevron_right dan ujung daftar memiliki kartu Lihat Semua', (tester) async {
+      final mockClient = MockClient((request) async {
+        if (request.url.path.contains('/trending/all/day')) {
+          return http.Response(
+            json.encode({
+              'page': 1,
+              'results': [
+                {
+                  'id': 101,
+                  'title': 'Trending Test Movie',
+                  'poster_path': '/trending101.jpg',
+                  'vote_average': 8.5,
+                  'original_language': 'ko',
+                  'media_type': 'movie',
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response(
+          json.encode({'page': 1, 'results': []}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+
+      final mockApiService = ApiService(client: mockClient);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: ExploreTab(apiService: mockApiService)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 1. Header memiliki icon chevron_right
+      expect(find.text('Trending Hari Ini'), findsOneWidget);
+      final chevronFinder = find.byIcon(Icons.chevron_right);
+      expect(chevronFinder, findsWidgets);
+
+      // 2. Kartu akhir Lihat Semua muncul di ListView
+      expect(find.text('Lihat Semua'), findsWidgets);
+
+      // 3. Tapping kartu Lihat Semua membuka SeeAllPage
+      await tester.tap(find.text('Lihat Semua').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SeeAllPage), findsOneWidget);
+      expect(find.text('Trending Hari Ini'), findsWidgets);
     });
   });
 }

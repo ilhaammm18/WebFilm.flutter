@@ -78,7 +78,7 @@ void main() {
         rating: 8.7,
         episodes: 1,
         watchedEpisodes: 0,
-        status: 'Rencana Ditonton',
+        status: 'Sedang Menonton',
         priority: 'Tinggi',
         startDate: '',
         endDate: '',

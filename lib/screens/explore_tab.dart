@@ -1,11 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../routes/app_router.dart';
 import '../widgets/app_drawer.dart';
-import 'detail_page.dart';
 import '../models/drama.dart';
-import '../data/shared_data.dart';
-import 'search_page.dart';
-import 'see_all_page.dart';
 import '../services/api_service.dart';
+import '../utils/helpers.dart';
+import 'decade_explore_page.dart';
 
 class ExploreTab extends StatefulWidget {
   final ApiService? apiService;
@@ -29,12 +28,12 @@ class _ExploreTabState extends State<ExploreTab>
   String? _selectedAnimationLanguage;
 
   // Futures untuk Tab UNTUK ANDA
-  late Future<List<Drama>> _trendingMixFuture;
-  late Future<List<Drama>> _trendingMoviesFuture;
-  late Future<List<Drama>> _nowPlayingMoviesFuture;
+  late Future<List<Drama>> _trendingWeekFuture;
+  late Future<List<Drama>> _topRatedFuture;
+  late Future<List<Drama>> _trendingDayFuture;
+  late Future<List<Drama>> _upcomingFuture;
   Future<List<Drama>>? _koreanDramasFuture;
   Future<List<Drama>>? _koreanMoviesFuture;
-  Future<List<Drama>>? _animeListFuture;
   Future<List<Drama>>? _westernMoviesFuture;
 
   // Futures untuk Tab DRAMA
@@ -82,8 +81,8 @@ class _ExploreTabState extends State<ExploreTab>
   // Daftar Opsi Sub-Filter Negara di Tab DRAMA
   static const List<Map<String, dynamic>> _dramaFilters = [
     {'label': 'Semua', 'code': null},
-    {'label': 'Korea (Drakor)', 'code': 'ko'},
-    {'label': 'Jepang (Dorama)', 'code': 'ja'},
+    {'label': 'Korea', 'code': 'ko'},
+    {'label': 'Jepang', 'code': 'ja'},
     {'label': 'Barat', 'code': 'en'},
     {'label': 'China/Thai', 'code': 'zh|th'},
   ];
@@ -115,14 +114,10 @@ class _ExploreTabState extends State<ExploreTab>
   }
 
   void _fetchUntukAndaData() {
-    _trendingMixFuture = _apiService.getTrendingAllMix();
-    _trendingMoviesFuture = _apiService.getTrendingMovies();
-    _nowPlayingMoviesFuture = _apiService.getNowPlayingMovies();
-    _koreanDramasFuture = _apiService.getKoreanDramas(genreId: _selectedGenreId);
-    _koreanMoviesFuture = _apiService.getKoreanMovies(genreId: _selectedGenreId);
-    _animeListFuture = _apiService.getAnimeList(genreId: _selectedGenreId);
-    _westernMoviesFuture =
-        _apiService.getWesternMovies(genreId: _selectedGenreId);
+    _trendingWeekFuture = _apiService.getTrendingAllWeek();
+    _topRatedFuture = _apiService.getTopRatedMovies(genreId: _selectedGenreId);
+    _trendingDayFuture = _apiService.getTrendingAllMix();
+    _upcomingFuture = _apiService.getMovieUpcoming();
   }
 
   void _fetchDramaData() {
@@ -267,7 +262,7 @@ class _ExploreTabState extends State<ExploreTab>
                                 _selectedGenreId = null;
                                 _refreshAllTabsData();
                               });
-                              Navigator.pop(modalContext);
+                              modalContext.pop();
                             },
                             child: Text(
                               'Reset Filter',
@@ -301,7 +296,7 @@ class _ExploreTabState extends State<ExploreTab>
                               }
                               _refreshAllTabsData();
                             });
-                            Navigator.pop(modalContext);
+                            modalContext.pop();
                           },
                           selectedColor: primaryBlue,
                           backgroundColor: isDark
@@ -358,12 +353,7 @@ class _ExploreTabState extends State<ExploreTab>
           IconButton(
             icon: Icon(Icons.search, color: textColor),
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const SearchPage(),
-                ),
-              );
+              context.push('/search');
             },
           ),
           // 2. Ikon Filter/Kategori Genre (kedua / paling kanan)
@@ -417,7 +407,7 @@ class _ExploreTabState extends State<ExploreTab>
         controller: _tabController,
         children: [
           // 1. Tab UNTUK ANDA (Mix TMDB & Rekomendasi)
-          _buildUntukAndaTab(textColor, primaryBlue),
+          _buildUntukAndaTab(textColor, primaryBlue, isDark),
 
           // 2. Tab DRAMA (Populer, Korea, Jepang, Barat, China/Thai dengan Sub-Filter)
           _buildDramaTab(textColor, primaryBlue, isDark),
@@ -435,7 +425,7 @@ class _ExploreTabState extends State<ExploreTab>
   // ===========================================================================
   // WIDGET TAB: UNTUK ANDA
   // ===========================================================================
-  Widget _buildUntukAndaTab(Color textColor, Color primaryBlue) {
+  Widget _buildUntukAndaTab(Color textColor, Color primaryBlue, bool isDark) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       child: Column(
@@ -443,117 +433,148 @@ class _ExploreTabState extends State<ExploreTab>
         children: [
           const SizedBox(height: 16),
 
-          // 1. Kategori Mix: /trending/all/day
+          // 1. Baris Kategori: Paling Banyak Ditambahkan Minggu Ini (/trending/all/week)
+          _buildHorizontalApiSection(
+            title: 'Paling Banyak Ditambahkan Minggu Ini',
+            future: _trendingWeekFuture,
+            textColor: textColor,
+            primaryBlue: primaryBlue,
+            hideIfEmpty: true,
+          ),
+
+          // 2. Baris Kategori: Rekomendasi Untuk Anda (/movie/top_rated atau /discover/movie)
+          _buildHorizontalApiSection(
+            title: 'Rekomendasi Untuk Anda',
+            future: _topRatedFuture,
+            textColor: textColor,
+            primaryBlue: primaryBlue,
+            hideIfEmpty: true,
+          ),
+
+          // 3. Baris Kategori: Trending Hari Ini (/trending/all/day)
           _buildHorizontalApiSection(
             title: 'Trending Hari Ini',
-            future: _trendingMixFuture,
+            future: _trendingDayFuture,
             textColor: textColor,
             primaryBlue: primaryBlue,
             hideIfEmpty: true,
           ),
 
-          // 2. Kategori Drama Korea: /discover/tv?with_original_language=ko
+          // 4. Baris Kategori: Segera Hadir (/discover/movie)
+          // Khusus kategori ini: tampilkan release_date di bawah judul/poster
           _buildHorizontalApiSection(
-            title: 'Drama Korea Populer',
-            future: _koreanDramasFuture!,
+            title: 'Segera Hadir',
+            future: _upcomingFuture,
             textColor: textColor,
             primaryBlue: primaryBlue,
             hideIfEmpty: true,
+            showReleaseDate: true,
           ),
 
-          // 3. Kategori Film Korea: /discover/movie?with_original_language=ko
-          _buildHorizontalApiSection(
-            title: 'Film Korea Pilihan',
-            future: _koreanMoviesFuture!,
-            textColor: textColor,
-            primaryBlue: primaryBlue,
-            hideIfEmpty: true,
-          ),
-
-          // 4. Kategori Anime/Drama Jepang: /discover/tv?with_original_language=ja
-          _buildHorizontalApiSection(
-            title: 'Anime & Drama Jepang',
-            future: _animeListFuture!,
-            textColor: textColor,
-            primaryBlue: primaryBlue,
-            hideIfEmpty: true,
-          ),
-
-          // 5. Kategori Film Barat/Global: /discover/movie?with_original_language=en
-          _buildHorizontalApiSection(
-            title: 'Film Barat Pilihan',
-            future: _westernMoviesFuture!,
-            textColor: textColor,
-            primaryBlue: primaryBlue,
-            hideIfEmpty: true,
-          ),
-
-          // Seksi Tambahan: Direkomendasikan Untuk Anda (TMDB Trending Movies)
-          _buildHorizontalApiSection(
-            title: 'Direkomendasikan Untuk Anda',
-            future: _trendingMoviesFuture,
-            textColor: textColor,
-            primaryBlue: primaryBlue,
-          ),
-
-          // Seksi Tambahan: Sedang Ditonton Sekarang (TMDB Now Playing Movies)
-          _buildHorizontalApiSection(
-            title: 'Sedang Ditonton Sekarang',
-            future: _nowPlayingMoviesFuture,
-            textColor: textColor,
-            primaryBlue: primaryBlue,
-          ),
-
-          // Seksi: Daftar Tonton Saya & Sedang Tren (Lokal)
-          ValueListenableBuilder<List<Drama>>(
-            valueListenable: SharedData.dramaListNotifier,
-            builder: (context, dramaList, _) {
-              List<Drama> myWatchlist = dramaList;
-              List<Drama> trending = List.from(dramaList);
-              trending.sort((a, b) => b.rating.compareTo(a.rating));
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSectionHeader(
-                      'Daftar Tonton Saya', textColor, primaryBlue, () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => SeeAllPage(
-                          title: 'Daftar Tonton Saya',
-                          dramaList: myWatchlist,
-                        ),
-                      ),
-                    );
-                  }),
-                  _buildHorizontalList(
-                      myWatchlist, textColor, section: 'Daftar Tonton Saya'),
-                  const SizedBox(height: 32),
-                  _buildSectionHeader('Sedang Tren', textColor, primaryBlue,
-                      () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => SeeAllPage(
-                          title: 'Sedang Tren',
-                          dramaList: trending,
-                        ),
-                      ),
-                    );
-                  }),
-                  _buildHorizontalList(
-                      trending, textColor, section: 'Sedang Tren'),
-                ],
-              );
-            },
-          ),
+          // Seksi: Jelajahi Berdasarkan Dekade (Browse by Decade) - Paling Bawah
+          _buildDecadeSection(textColor, primaryBlue, isDark),
 
           const SizedBox(height: 40),
         ],
       ),
     );
   }
+
+  // ===========================================================================
+  // WIDGET SEKSI: JELAJAHI BERDASARKAN DEKADE (BROWSE BY DECADE)
+  // ===========================================================================
+  Widget _buildDecadeSection(Color textColor, Color primaryBlue, bool isDark) {
+    const List<String> decades = [
+      '2020s',
+      '2010s',
+      '2000s',
+      '1990s',
+      '1980s',
+      '1970s',
+      '1960s',
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Jelajahi Berdasarkan Dekade',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          clipBehavior: Clip.none,
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Row(
+            children: decades.map((decade) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 10.0),
+                child: InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => DecadeExplorePage(
+                          decade: decade,
+                          apiService: _apiService,
+                        ),
+                      ),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF1F222A)
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: isDark
+                            ? const Color(0xFF2E3340)
+                            : Colors.grey.shade300,
+                      ),
+                    ),
+                    child: Text(
+                      decade,
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+
 
   // ===========================================================================
   // WIDGET TAB: DRAMA DENGAN SUB-FILTER NEGARA DINAMIS
@@ -863,6 +884,7 @@ class _ExploreTabState extends State<ExploreTab>
     required Color textColor,
     required Color primaryBlue,
     bool hideIfEmpty = false,
+    bool showReleaseDate = false,
   }) {
     return FutureBuilder<List<Drama>>(
       future: future,
@@ -875,20 +897,22 @@ class _ExploreTabState extends State<ExploreTab>
           return const SizedBox.shrink();
         }
 
+        void onSeeAll() {
+          if (items.isNotEmpty) {
+            context.push(
+              '/see-all',
+              extra: {
+                'title': title,
+                'dramaList': items,
+              },
+            );
+          }
+        }
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionHeader(title, textColor, primaryBlue, () {
-              if (items.isNotEmpty) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        SeeAllPage(title: title, dramaList: items),
-                  ),
-                );
-              }
-            }),
+            _buildSectionHeader(title, textColor, primaryBlue, onSeeAll),
             if (snapshot.connectionState == ConnectionState.waiting)
               SizedBox(
                 height: MediaQuery.of(context).size.width > 800 ? 280.0 : 220.0,
@@ -923,7 +947,13 @@ class _ExploreTabState extends State<ExploreTab>
                 ),
               )
             else
-              _buildHorizontalList(items, textColor, section: title),
+              _buildHorizontalList(
+                items,
+                textColor,
+                section: title,
+                onSeeAll: onSeeAll,
+                showReleaseDate: showReleaseDate,
+              ),
             const SizedBox(height: 16),
           ],
         );
@@ -938,24 +968,34 @@ class _ExploreTabState extends State<ExploreTab>
       String title, Color textColor, Color primaryBlue, VoidCallback onSeeAll) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-              child: Text(title,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: InkWell(
+          onTap: onSeeAll,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
                   style: TextStyle(
-                      color: textColor,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold))),
-          GestureDetector(
-            onTap: onSeeAll,
-            child: Text('Lihat Semua',
-                style: TextStyle(
-                    color: primaryBlue,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
+                    color: textColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Icon(
+                  Icons.chevron_right,
+                  color: Colors.grey,
+                  size: 20,
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -964,16 +1004,32 @@ class _ExploreTabState extends State<ExploreTab>
     List<Drama> list,
     Color textColor, {
     String section = 'explore',
+    VoidCallback? onSeeAll,
+    bool showReleaseDate = false,
   }) {
     final double screenWidth = MediaQuery.of(context).size.width;
     final double cardWidth = screenWidth > 800 ? 160.0 : 120.0;
     final double listHeight = screenWidth > 800 ? 280.0 : 220.0;
     final double imageHeight = screenWidth > 800 ? 220.0 : 170.0;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
     final String cleanSection = section
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
+
+    final VoidCallback effectiveOnSeeAll = onSeeAll ??
+        () {
+          if (list.isNotEmpty) {
+            context.push(
+              '/see-all',
+              extra: {
+                'title': section,
+                'dramaList': list,
+              },
+            );
+          }
+        };
 
     return SizedBox(
       height: listHeight,
@@ -982,23 +1038,60 @@ class _ExploreTabState extends State<ExploreTab>
         physics: const BouncingScrollPhysics(),
         clipBehavior: Clip.none,
         padding: const EdgeInsets.symmetric(horizontal: 24),
-        itemCount: list.length,
+        itemCount: list.isEmpty ? 0 : list.length + 1,
         itemBuilder: (context, index) {
+          // Tombol 'Lihat Semua' di ujung kanan daftar (akhir scroll)
+          if (index == list.length) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 4, right: 8),
+                child: InkWell(
+                  onTap: effectiveOnSeeAll,
+                  borderRadius: BorderRadius.circular(50),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF262A37)
+                          : Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(50),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white12
+                            : Colors.grey.shade300,
+                      ),
+                    ),
+                    child: Text(
+                      'Lihat Semua',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+
           final Drama item = list[index];
           final String heroTag =
               'explore_${cleanSection}_${item.id > 0 ? item.id : item.title}';
 
           return GestureDetector(
             onTap: () {
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => DetailPage(
-                            drama: item,
-                            apiService: _apiService,
-                            heroTag: heroTag,
-                            posterUrl: item.image,
-                          )));
+              context.push(
+                '/movie/${item.id}',
+                extra: {
+                  'drama': item,
+                  'apiService': _apiService,
+                  'heroTag': heroTag,
+                  'posterUrl': item.image,
+                },
+              );
             },
             child: Container(
               width: cardWidth,
@@ -1070,8 +1163,21 @@ class _ExploreTabState extends State<ExploreTab>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
-                  Text(getDynamicLabel(drama: item),
-                      style: const TextStyle(color: Colors.grey, fontSize: 11),
+                  Text(
+                      showReleaseDate
+                          ? (item.releaseDate.isNotEmpty
+                              ? item.releaseDate
+                              : getDynamicLabel(drama: item))
+                          : getDynamicLabel(drama: item),
+                      style: TextStyle(
+                        color: showReleaseDate
+                            ? const Color(0xFF0094FF)
+                            : Colors.grey,
+                        fontSize: 11,
+                        fontWeight: showReleaseDate
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                 ],

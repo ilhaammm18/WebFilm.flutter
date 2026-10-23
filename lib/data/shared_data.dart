@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 import '../models/drama.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
@@ -60,7 +61,7 @@ class SharedData {
     "Tampopo (1985)", "Shoplifters (2018)"
   ];
 
-  static List<Drama> _generateData() {
+  static List<Drama> generateData() {
     List<Drama> generatedList = [];
     Random random = Random(42);
     int posterIndex = 0;
@@ -176,7 +177,142 @@ class SharedData {
     }
   }
 
-  static final DramaListNotifier dramaListNotifier = DramaListNotifier(_generateData());
+  static SupabaseClient? _getSupabaseClient([SupabaseClient? client]) {
+    if (client != null) return client;
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Mengambil data watchlist pengguna dari Supabase yang difilter ketat berdasarkan user login (user_id).
+  /// Memastikan user baru hanya melihat daftar kosong, dan user lama hanya melihat data miliknya sendiri.
+  static Future<void> fetchUserWatchlist({SupabaseClient? client, ApiService? apiService}) async {
+    final supabase = _getSupabaseClient(client);
+    if (supabase == null) return;
+
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      // Jika tidak ada user login, pastikan daftar kosong
+      dramaListNotifier.value = [];
+      return;
+    }
+
+    try {
+      final List<dynamic> data = await supabase
+          .from('watchlists')
+          .select()
+          .eq('user_id', userId);
+
+      final List<Drama> list = data
+          .map((item) => Drama.fromSupabase(item as Map<String, dynamic>))
+          .toList();
+
+      dramaListNotifier.value = List<Drama>.from(list);
+      dramaListNotifier.notifyListeners();
+
+      // Lakukan background fetch detail TMDB berdasarkan tmdb_id untuk mengisi poster & episode
+      final service = apiService ?? ApiService();
+      final itemsToEnrich = list
+          .where((d) =>
+              d.id > 0 &&
+              (d.image.isEmpty ||
+                  d.episodes == 0 ||
+                  d.genre == 'General' ||
+                  d.genre.isEmpty))
+          .toList();
+      if (itemsToEnrich.isNotEmpty) {
+        Future.wait(itemsToEnrich.map((drama) async {
+          try {
+            final detail = await service.getMovieDetails(
+              drama.id,
+              mediaType: drama.mediaType.isNotEmpty ? drama.mediaType : null,
+            );
+            if (detail.image.isNotEmpty) drama.image = detail.image;
+            if (detail.backdrop.isNotEmpty && drama.backdrop.isEmpty) {
+              drama.backdrop = detail.backdrop;
+            }
+            if (detail.genre.isNotEmpty && detail.genre != 'General') {
+              drama.genre = detail.genre;
+            } else if (drama.genre == 'General' || drama.genre.isEmpty) {
+              drama.genre = detail.mediaType == 'tv' ? 'Serial TV' : 'Film';
+            }
+            if (detail.genresList.isNotEmpty) {
+              drama.genresList = detail.genresList;
+            }
+            if (detail.genreIds.isNotEmpty) {
+              drama.genreIds = detail.genreIds;
+            }
+            if (detail.episodes > 0 && drama.episodes == 0) {
+              drama.episodes = detail.episodes;
+            }
+            if (detail.originalLanguage.isNotEmpty && drama.originalLanguage.isEmpty) {
+              drama.originalLanguage = detail.originalLanguage;
+            }
+            if (detail.mediaType.isNotEmpty && (drama.mediaType.isEmpty || drama.mediaType == 'tv')) {
+              drama.mediaType = detail.mediaType;
+            }
+          } catch (_) {}
+        })).then((_) {
+          dramaListNotifier.value = List<Drama>.from(list);
+          dramaListNotifier.notifyListeners();
+        });
+      }
+    } catch (e) {
+      debugPrint('Gagal fetch data watchlist dari Supabase: $e');
+    }
+  }
+
+  /// Mengambil data riwayat pembaruan pengguna dari Supabase (dinonaktifkan / tidak digunakan lagi di web)
+  static Future<List<Map<String, dynamic>>> fetchUserRiwayat({SupabaseClient? client}) async {
+    // Fitur riwayat pencarian/pembaruan sudah tidak digunakan lagi di aplikasi web ini
+    /*
+    final supabase = _getSupabaseClient(client);
+    if (supabase == null) return [];
+
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    try {
+      final List<dynamic> data = await supabase
+          .from('riwayat')
+          .select()
+          .eq('user_id', userId)
+          .order('created_at', ascending: false);
+
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      debugPrint('Gagal fetch data riwayat dari Supabase: $e');
+      return [];
+    }
+    */
+    return [];
+  }
+
+  static final DramaListNotifier dramaListNotifier = DramaListNotifier([]);
+
+  /// Mengambil daftar ID numerik film tersimpan (berdasarkan tmdb_id/drama_id) dari Supabase / watchlist aktif
+  static List<int> get savedMovieIds => dramaListNotifier.value
+      .where((d) =>
+          d.status == 'Rencana Ditonton' ||
+          d.status == 'Sedang Menonton' ||
+          d.status == 'Selesai')
+      .map((d) => d.id)
+      .where((id) => id > 0)
+      .toList();
+
+  /// Memetakan daftar id film tersimpan langsung dari raw response Supabase berdasarkan kolom tmdb_id
+  static List<int> mapSavedMovieIdsFromSupabase(List<dynamic> rows) {
+    return rows.map((row) {
+      if (row is Map) {
+        final rawTmdbId = row['tmdb_id'] ?? row['drama_id'] ?? row['id'];
+        if (rawTmdbId is num) return rawTmdbId.toInt();
+        return int.tryParse(rawTmdbId?.toString() ?? '') ?? 0;
+      }
+      return 0;
+    }).where((id) => id > 0).toList();
+  }
 
   static final User currentUser = User(
     username: 'ilham_dev',
@@ -185,4 +321,101 @@ class SharedData {
     avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
     joinedDate: DateTime(2024, 2, 14),
   );
+
+  static final ValueNotifier<UserProfileData> userProfileNotifier =
+      ValueNotifier<UserProfileData>(const UserProfileData());
+
+  /// Sinkronisasi data profil pengguna dari Supabase Auth dan tabel profiles
+  static Future<void> fetchUserProfile({SupabaseClient? client}) async {
+    final supabase = _getSupabaseClient(client);
+    if (supabase == null) return;
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+
+      String name = userProfileNotifier.value.fullName;
+      String uname = userProfileNotifier.value.username;
+      String bio = userProfileNotifier.value.bio;
+      String avatar = userProfileNotifier.value.avatarUrl;
+
+      final meta = user.userMetadata ?? {};
+      if (meta['full_name'] != null && (meta['full_name'] as String).trim().isNotEmpty) {
+        name = (meta['full_name'] as String).trim();
+      }
+      if (meta['username'] != null && (meta['username'] as String).trim().isNotEmpty) {
+        uname = (meta['username'] as String).trim();
+      }
+      if (meta['bio'] != null && (meta['bio'] as String).trim().isNotEmpty) {
+        bio = (meta['bio'] as String).trim();
+      }
+      if (meta['avatar_url'] != null && (meta['avatar_url'] as String).trim().isNotEmpty) {
+        avatar = (meta['avatar_url'] as String).trim();
+      }
+
+      try {
+        final profile = await supabase.from('profiles').select().eq('id', user.id).maybeSingle();
+        if (profile != null) {
+          if (profile['full_name'] != null && (profile['full_name'] as String).trim().isNotEmpty) {
+            name = (profile['full_name'] as String).trim();
+          }
+          if (profile['username'] != null && (profile['username'] as String).trim().isNotEmpty) {
+            uname = (profile['username'] as String).trim();
+          }
+          if (profile['bio'] != null && (profile['bio'] as String).trim().isNotEmpty) {
+            bio = (profile['bio'] as String).trim();
+          }
+          if (profile['avatar_url'] != null && (profile['avatar_url'] as String).trim().isNotEmpty) {
+            avatar = (profile['avatar_url'] as String).trim();
+          }
+        } else {
+          // Akun lama belum tercatat di profiles -> sinkronkan otomatis dari userMetadata ke tabel profiles
+          try {
+            await supabase.from('profiles').upsert({
+              'id': user.id,
+              'username': uname.toLowerCase(),
+              'full_name': name,
+              'bio': bio,
+              'avatar_url': avatar,
+            });
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      userProfileNotifier.value = UserProfileData(
+        fullName: name,
+        username: uname,
+        bio: bio,
+        avatarUrl: avatar,
+      );
+    } catch (_) {}
+  }
+}
+
+class UserProfileData {
+  final String fullName;
+  final String username;
+  final String bio;
+  final String avatarUrl;
+
+  const UserProfileData({
+    this.fullName = 'Muhammad Nur Ilham',
+    this.username = '25051204433',
+    this.bio =
+        'Selamat Datang di MyWatchList! Halo! Saya Muhammad Nur Ilham. Saat ini saya adalah mahasiswa Teknik Informatika Universitas Negeri Surabaya (Unesa) semester 3. Web ini dibuat untuk memenuhi tugas mata kuliah Pemrograman Berbasis Platform (PBP).',
+    this.avatarUrl = 'assets/profile.jpg',
+  });
+
+  UserProfileData copyWith({
+    String? fullName,
+    String? username,
+    String? bio,
+    String? avatarUrl,
+  }) {
+    return UserProfileData(
+      fullName: fullName ?? this.fullName,
+      username: username ?? this.username,
+      bio: bio ?? this.bio,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+    );
+  }
 }

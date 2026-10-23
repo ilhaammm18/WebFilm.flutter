@@ -1,27 +1,38 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../routes/app_router.dart';
 import '../models/drama.dart';
 import '../models/actor.dart';
-import 'actor_detail_page.dart';
 import '../services/api_service.dart';
 import '../widgets/edit_drama_modal.dart';
 import '../data/shared_data.dart';
 import '../utils/helpers.dart';
 export '../widgets/edit_drama_modal.dart';
 export '../utils/helpers.dart';
+export 'full_credits_page.dart';
+
+/// Alias penamaan MovieDetailPage yang merujuk pada DetailPage
+typedef MovieDetailPage = DetailPage;
 
 class DetailPage extends StatefulWidget {
-  final Drama drama;
+  final Drama? drama;
+  final Drama? movie;
+  final int? movieId;
   final ApiService? apiService;
   final String? heroTag;
   final String? posterUrl;
 
   const DetailPage({
     super.key,
-    required this.drama,
+    this.drama,
+    this.movie,
+    this.movieId,
     this.apiService,
     this.heroTag,
     this.posterUrl,
-  });
+  }) : assert(drama != null || movie != null || movieId != null,
+            'Either drama, movie or movieId must be provided');
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -29,31 +40,198 @@ class DetailPage extends StatefulWidget {
 
 class _DetailPageState extends State<DetailPage> {
   late final ApiService _apiService;
-  Future<List<ActorCredit>>? _creditsFuture;
+  Drama? _fetchedMovie;
+  bool _isLoading = false;
+  bool _hasError = false;
+  String _errorMessage = '';
+  List<ActorCredit> _castList = [];
+  List<MovieCrewMember> _crewList = [];
+  List<WatchProvider> _providersList = [];
+  String? _trailerKey;
 
   @override
   void initState() {
     super.initState();
     _apiService = widget.apiService ?? ApiService();
-    if (widget.drama.id > 0) {
-      _creditsFuture = _apiService.getMediaCredits(
-        widget.drama.id,
-        mediaType: widget.drama.mediaType,
+    final Drama? initialMovie = widget.movie ?? widget.drama;
+    final int movieId = widget.movieId ?? initialMovie?.id ?? 0;
+    if (movieId > 0) {
+      fetchMovieDetails(movieId, initialMovie?.mediaType);
+    }
+  }
+
+  void fetchMovieDetails(int movieId, [String? mediaType]) async {
+    final Drama? initialMovie = widget.movie ?? widget.drama;
+    final bool needsFullLoading = _fetchedMovie == null && initialMovie == null;
+
+    if (mounted) {
+      setState(() {
+        if (needsFullLoading) {
+          _isLoading = true;
+        }
+        _hasError = false;
+        _errorMessage = '';
+      });
+    }
+
+    try {
+      final results = await Future.wait([
+        _apiService.getMovieDetails(movieId, mediaType: mediaType),
+        _apiService.getMovieCredits(movieId, mediaType: mediaType ?? 'movie'),
+        _apiService.getMovieWatchProviders(movieId, mediaType: mediaType ?? 'movie'),
+        _apiService.getMovieTrailerKey(movieId, mediaType: mediaType ?? 'movie'),
+      ]);
+
+      if (mounted) {
+        setState(() {
+          _fetchedMovie = results[0] as Drama;
+          final credits = results[1] as MovieCreditsResult;
+          _castList = credits.cast;
+          _crewList = credits.crew;
+          _providersList = results[2] as List<WatchProvider>;
+          _trailerKey = results[3] as String?;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          if (_fetchedMovie == null && initialMovie == null) {
+            _hasError = true;
+            _errorMessage = e.toString();
+          }
+        });
+      }
+    }
+  }
+
+  /// Memutar trailer video YouTube dari TMDB
+  Future<void> _playTrailer(BuildContext context, Drama currentDrama) async {
+    final int movieId = currentDrama.id > 0
+        ? currentDrama.id
+        : (widget.movieId ?? widget.movie?.id ?? widget.drama?.id ?? 0);
+
+    String? key = _trailerKey;
+
+    if (key == null || key.isEmpty) {
+      if (movieId > 0) {
+        try {
+          key = await _apiService.getMovieTrailerKey(
+            movieId,
+            mediaType: currentDrama.mediaType.isNotEmpty
+                ? currentDrama.mediaType
+                : (currentDrama.isMovie ? 'movie' : 'tv'),
+          );
+          _trailerKey = key;
+        } catch (_) {}
+      }
+    }
+
+    if (!context.mounted) return;
+
+    if (key != null && key.isNotEmpty) {
+      final Uri youtubeUri = Uri.parse('https://www.youtube.com/watch?v=$key');
+      try {
+        final bool launched = await launchUrl(
+          youtubeUri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (!launched) {
+          await launchUrl(youtubeUri);
+        }
+      } catch (_) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Maaf, trailer belum tersedia untuk tayangan ini.'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Maaf, trailer belum tersedia untuk tayangan ini.'),
+          duration: Duration(seconds: 2),
+        ),
       );
     }
   }
 
   // Fungsi untuk membuka EditDramaModal (Bottom Sheet Edit Tontonan)
   void _openEditModal(BuildContext context, Drama currentDrama) async {
+    final int effId = currentDrama.id > 0
+        ? currentDrama.id
+        : (widget.movieId ?? widget.movie?.id ?? widget.drama?.id ?? 0);
+
+    final String effTitle = currentDrama.title;
+
+    Drama? matchedInWatchlist;
+    try {
+      matchedInWatchlist = SharedData.dramaListNotifier.value.firstWhere(
+        (d) => effId > 0
+            ? d.id == effId
+            : (effTitle.isNotEmpty &&
+                d.title.trim().toLowerCase() == effTitle.trim().toLowerCase()),
+      );
+    } catch (_) {
+      matchedInWatchlist = null;
+    }
+
+    final bool isSaved = matchedInWatchlist != null &&
+        matchedInWatchlist.status != 'Belum Ditonton' &&
+        (matchedInWatchlist.status == 'Rencana Ditonton' ||
+            matchedInWatchlist.status == 'Sedang Menonton' ||
+            matchedInWatchlist.status == 'Selesai');
+
+    final Drama dramaToEdit = isSaved
+        ? currentDrama.copyWith(
+            status: matchedInWatchlist.status,
+            watchedEpisodes: matchedInWatchlist.watchedEpisodes,
+            episodes: matchedInWatchlist.episodes > 0
+                ? matchedInWatchlist.episodes
+                : currentDrama.episodes,
+            myRating:
+                matchedInWatchlist.userRating ?? matchedInWatchlist.myRating,
+            userRating:
+                matchedInWatchlist.userRating ?? matchedInWatchlist.myRating,
+            priority: matchedInWatchlist.priority,
+            startDate: matchedInWatchlist.startDate,
+            endDate: matchedInWatchlist.endDate,
+            dateCompleted: matchedInWatchlist.dateCompleted,
+          )
+        : currentDrama;
+
+    final String initialStatus = isSaved
+        ? matchedInWatchlist.status
+        : (currentDrama.status.isNotEmpty ? currentDrama.status : 'Belum Ditonton');
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => EditDramaModal(drama: currentDrama),
+      builder: (context) => EditDramaModal(
+        drama: dramaToEdit,
+        initialStatus: initialStatus,
+      ),
     );
+
+    // Refresh data / sinkronisasi ulang dan perbarui tampilan halaman
+    await _refreshWatchlistData();
     if (mounted) {
       setState(() {});
     }
+  }
+
+  Future<void> _refreshWatchlistData() async {
+    try {
+      final client = Supabase.instance.client;
+      if (client.auth.currentUser != null) {
+        await SharedData.fetchUserWatchlist(client: client);
+      }
+    } catch (_) {}
   }
 
   @override
@@ -65,24 +243,165 @@ class _DetailPageState extends State<DetailPage> {
     Color subTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     Color primaryBlue = const Color(0xFF0094FF);
 
+    final Drama? initialMovie = widget.movie ?? widget.drama;
+    final int effectiveId = widget.movieId ?? initialMovie?.id ?? 0;
+    final String fallbackTitle = initialMovie?.title ?? '';
+
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: bgColor,
+        body: Center(
+          child: CircularProgressIndicator(color: primaryBlue),
+        ),
+      );
+    }
+
+    if (_hasError) {
+      return Scaffold(
+        backgroundColor: bgColor,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back, color: textColor),
+            onPressed: () => context.pop(),
+          ),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline_rounded,
+                    size: 54, color: Colors.redAccent),
+                const SizedBox(height: 16),
+                Text(
+                  'Gagal memuat detail film',
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _errorMessage.isNotEmpty
+                      ? _errorMessage
+                      : 'Silakan periksa koneksi internet Anda.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: subTextColor, fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final int effId = widget.movieId ?? initialMovie?.id ?? 0;
+                    if (effId > 0) {
+                      fetchMovieDetails(effId);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Coba Lagi'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return ValueListenableBuilder<List<Drama>>(
       valueListenable: SharedData.dramaListNotifier,
       builder: (context, dramaList, _) {
-        // Sinkronisasi data real-time dari SharedData.dramaListNotifier
-        final currentDrama = dramaList.firstWhere(
-          (d) =>
-              d.title.trim().toLowerCase() ==
-              widget.drama.title.trim().toLowerCase(),
-          orElse: () => widget.drama,
-        );
+        // Sinkronisasi data real-time dari SharedData.dramaListNotifier berdasarkan ID
+        Drama? matchedDrama;
+        try {
+          matchedDrama = dramaList.firstWhere(
+            (d) => effectiveId > 0
+                ? d.id == effectiveId
+                : (fallbackTitle.isNotEmpty &&
+                    d.title.trim().toLowerCase() == fallbackTitle.trim().toLowerCase()),
+          );
+        } catch (_) {
+          matchedDrama = null;
+        }
+
+        // Prioritaskan data detail terbaru hasil fetch dari API TMDB
+        final Drama baseDrama = _fetchedMovie != null
+            ? ((_fetchedMovie!.title == 'Untitled' || _fetchedMovie!.title.isEmpty) &&
+                    (initialMovie != null &&
+                        initialMovie.title.isNotEmpty &&
+                        initialMovie.title != 'Untitled'))
+                ? _fetchedMovie!.copyWith(title: initialMovie.title)
+                : _fetchedMovie!
+            : (initialMovie != null
+                ? (initialMovie.synopsis.startsWith('Berperan sebagai') ||
+                        initialMovie.synopsis.startsWith('Informasi filmografi')
+                    ? initialMovie.copyWith(synopsis: '')
+                    : initialMovie)
+                : (matchedDrama ??
+                    Drama(
+                      id: effectiveId,
+                      title: fallbackTitle.isNotEmpty ? fallbackTitle : 'Memuat...',
+                      koreanTitle: '',
+                      genre: 'Film',
+                      rating: 0.0,
+                      episodes: 1,
+                      watchedEpisodes: 0,
+                      status: 'Rencana Ditonton',
+                      priority: 'Sedang',
+                      startDate: '',
+                      endDate: '',
+                      date: '',
+                      image: widget.posterUrl ?? '',
+                      rank: '#1',
+                      popularity: '0',
+                      watchers: '0',
+                      synopsis: '',
+                      aired: '',
+                      duration: '',
+                      contentRating: '13+',
+                      genresList: ['Film'],
+                      tagsList: ['TMDB'],
+                    )));
+
+        // Pertahankan status watchlist personal milik pengguna jika ada di list tontonan
+        final Drama currentDrama = matchedDrama != null
+            ? baseDrama.copyWith(
+                status: matchedDrama.status,
+                watchedEpisodes: matchedDrama.watchedEpisodes,
+                episodes: matchedDrama.episodes > 0
+                    ? matchedDrama.episodes
+                    : baseDrama.episodes,
+                myRating: matchedDrama.userRating ?? matchedDrama.myRating,
+                userRating: matchedDrama.userRating ?? matchedDrama.myRating,
+                priority: matchedDrama.priority,
+                startDate: matchedDrama.startDate,
+                endDate: matchedDrama.endDate,
+                dateCompleted: matchedDrama.dateCompleted,
+              )
+            : baseDrama;
+
+        final movie = currentDrama;
+
+        // Cek status penyimpanan film di database Supabase (Daftar Saya milik user)
+        final bool isSavedInWatchlist = matchedDrama != null &&
+            matchedDrama.status != 'Belum Ditonton' &&
+            (matchedDrama.status == 'Rencana Ditonton' ||
+                matchedDrama.status == 'Sedang Menonton' ||
+                matchedDrama.status == 'Selesai');
 
         bool isSelesai = currentDrama.status == 'Selesai';
         bool hasRated = currentDrama.hasUserRating;
-        bool isInWatchlist = [
-          'Sedang Menonton',
-          'Selesai',
-          'Rencana Ditonton'
-        ].contains(currentDrama.status);
 
         final String headerImage = currentDrama.backdrop.isNotEmpty
             ? currentDrama.backdrop
@@ -151,7 +470,7 @@ class _DetailPageState extends State<DetailPage> {
                         child: IconButton(
                           icon:
                               const Icon(Icons.arrow_back, color: Colors.white),
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () => context.pop(),
                         ),
                       ),
                     ),
@@ -237,18 +556,22 @@ class _DetailPageState extends State<DetailPage> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      if (currentDrama.koreanTitle.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          currentDrama.koreanTitle,
-                          style: TextStyle(color: subTextColor, fontSize: 13),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
                       const SizedBox(height: 4),
                       Text(
-                        '${currentDrama.mediaType == 'movie' ? 'Film' : 'Drama'} • ${currentDrama.date.isNotEmpty ? currentDrama.date : '2023'} • ${currentDrama.genre.split('•')[0].trim()}',
+                        (() {
+                          final List<String> gList = movie.genres.isNotEmpty
+                              ? movie.genres
+                              : (movie.genresList.isNotEmpty
+                                  ? movie.genresList
+                                  : [movie.genre]);
+                          final nonGeneral = gList
+                              .where((g) => g.isNotEmpty && g != 'Film' && g != 'Drama')
+                              .toList();
+                          if (nonGeneral.isNotEmpty) {
+                            return nonGeneral.join(', ');
+                          }
+                          return gList.where((g) => g.isNotEmpty).join(', ');
+                        })(),
                         style: TextStyle(color: subTextColor, fontSize: 12),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -257,14 +580,7 @@ class _DetailPageState extends State<DetailPage> {
 
                       // Tombol Trailer Warna Biru
                       ElevatedButton.icon(
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Trailer sedang dipersiapkan...'),
-                              duration: Duration(seconds: 1),
-                            ),
-                          );
-                        },
+                        onPressed: () => _playTrailer(context, currentDrama),
                         icon: const Icon(Icons.play_arrow_rounded,
                             color: Colors.white, size: 18),
                         label: const Text(
@@ -294,7 +610,7 @@ class _DetailPageState extends State<DetailPage> {
                 const SizedBox(height: 40),
 
                 // =============================================================
-                // TENGAH: KOTAK STATISTIK (BIRU TUA/GELAP) + KOTAK RATING DINAMIS
+                // TENGAH: KOTAK STATISTIK (3 KOLOM)
                 // =============================================================
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -309,27 +625,40 @@ class _DetailPageState extends State<DetailPage> {
                     child: Row(
                       children: [
                         _buildStatItem(
+                          Icons.calendar_today,
+                          primaryBlue,
+                          currentDrama.date.isNotEmpty ? currentDrama.date : '-',
+                          'Tanggal Rilis',
+                          subTextColor,
+                          textColor,
+                        ),
+                        _buildDivider(subTextColor),
+                        _buildStatItem(
+                          Icons.access_time,
+                          primaryBlue,
+                          _formatDuration(
+                              currentDrama.runtime, currentDrama.duration),
+                          'Durasi',
+                          subTextColor,
+                          textColor,
+                        ),
+                        _buildDivider(subTextColor),
+                        _buildStatItem(
                           Icons.trending_up,
                           primaryBlue,
-                          currentDrama.rank,
-                          'Peringkat',
+                          (() {
+                            final popNum =
+                                double.tryParse(currentDrama.popularity);
+                            if (popNum != null) {
+                              return popNum.round().toString();
+                            }
+                            return currentDrama.popularity.isNotEmpty
+                                ? currentDrama.popularity
+                                : '0';
+                          })(),
+                          'Kepopuleran',
                           subTextColor,
-                        ),
-                        _buildDivider(subTextColor),
-                        _buildStatItem(
-                          Icons.local_fire_department,
-                          primaryBlue,
-                          currentDrama.popularity,
-                          'Popularitas',
-                          subTextColor,
-                        ),
-                        _buildDivider(subTextColor),
-                        _buildStatItem(
-                          Icons.remove_red_eye,
-                          primaryBlue,
-                          currentDrama.watchers,
-                          'Penonton',
-                          subTextColor,
+                          textColor,
                         ),
                       ],
                     ),
@@ -379,9 +708,7 @@ class _DetailPageState extends State<DetailPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        currentDrama.synopsis.isNotEmpty
-                            ? currentDrama.synopsis
-                            : 'Tidak ada sinopsis yang tersedia untuk judul ini.',
+                        movie.overview ?? movie.description ?? 'Sinopsis belum tersedia.',
                         style: TextStyle(
                           color: textColor.withValues(alpha: 0.9),
                           fontSize: 14,
@@ -395,12 +722,12 @@ class _DetailPageState extends State<DetailPage> {
                 const SizedBox(height: 24),
 
                 // =============================================================
-                // AKTOR: DAFTAR AKTOR PEMERAN (ENDPOINT CREDITS TMDB)
+                // BAGIAN: TEMPAT MENONTON (WATCH PROVIDERS TMDB)
                 // =============================================================
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    'Pemeran',
+                    'Tempat Menonton',
                     style: TextStyle(
                       color: textColor,
                       fontSize: 16,
@@ -409,21 +736,54 @@ class _DetailPageState extends State<DetailPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                _buildWatchProvidersSection(
+                    isDark, textColor, subTextColor, primaryBlue),
 
-                _buildCastSection(isDark, textColor, subTextColor, primaryBlue),
+                const SizedBox(height: 24),
 
-                const SizedBox(height: 100),
+                // =============================================================
+                // BAGIAN: PEMERAN (CAST TMDB)
+                // =============================================================
+                _buildSectionHeader(
+                  'Pemeran',
+                  textColor,
+                  primaryBlue,
+                  () => _showAllCast(context, isDark, textColor, primaryBlue),
+                ),
+                const SizedBox(height: 12),
+                _buildCastSection(
+                    isDark, textColor, subTextColor, primaryBlue),
+
+                const SizedBox(height: 24),
+
+                // =============================================================
+                // BAGIAN: TIM (CREW TMDB)
+                // =============================================================
+                _buildSectionHeader(
+                  'Tim',
+                  textColor,
+                  primaryBlue,
+                  () => _showAllCrew(context, isDark, textColor, primaryBlue),
+                ),
+                const SizedBox(height: 12),
+                _buildCrewSection(
+                    isDark, textColor, subTextColor, primaryBlue),
+
+                const SizedBox(height: 120),
               ],
             ),
           ),
 
           floatingActionButton: FloatingActionButton(
+            key: const Key('movie_detail_fab'),
             onPressed: () => _openEditModal(context, currentDrama),
             backgroundColor: primaryBlue,
             shape: const CircleBorder(),
-            tooltip: isInWatchlist ? 'Edit Tontonan' : 'Tambah ke Tontonan',
+            tooltip: isSavedInWatchlist
+                ? 'Ubah Status Tontonan'
+                : 'Tambah ke Daftar Tontonan',
             child: Icon(
-              isInWatchlist ? Icons.edit : Icons.add,
+              isSavedInWatchlist ? Icons.edit : Icons.add,
               color: Colors.white,
               size: 26,
             ),
@@ -434,18 +794,80 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   // ===========================================================================
-  // WIDGET PEMBANTU: SECTION CREDITS / AKTOR PEMERAN
+  // HELPER FORMAT DURASI (JAM & MENIT)
   // ===========================================================================
-  Widget _buildCastSection(
+  String _formatDuration(int? runtime, [String fallback = '']) {
+    if (runtime != null && runtime > 0) {
+      final hours = runtime ~/ 60;
+      final minutes = runtime % 60;
+      if (hours > 0 && minutes > 0) {
+        return '${hours}j ${minutes}m';
+      } else if (hours > 0) {
+        return '${hours}j';
+      } else {
+        return '${minutes}m';
+      }
+    }
+    if (fallback.isNotEmpty) {
+      return fallback;
+    }
+    return '-';
+  }
+
+  // ===========================================================================
+  // HEADER SECTION: JUDUL DI KIRI + 'LIHAT SEMUA' DI KANAN
+  // ===========================================================================
+  Widget _buildSectionHeader(
+    String title,
+    Color textColor,
+    Color primaryBlue,
+    VoidCallback onSeeAll,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 8),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: onSeeAll,
+            style: TextButton.styleFrom(
+              foregroundColor: primaryBlue,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              'Lihat Semua',
+              style: TextStyle(
+                color: primaryBlue,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  void _showAllCast(
+    BuildContext context,
     bool isDark,
     Color textColor,
-    Color subTextColor,
     Color primaryBlue,
   ) {
-    if (_creditsFuture == null) {
-      return _buildActorsList(
-        dummyActors
-            .take(6)
+    final List<ActorCredit> castData = _castList.isNotEmpty
+        ? _castList
+        : dummyActors
             .map((a) => ActorCredit(
                   id: a.id,
                   title: a.name,
@@ -453,137 +875,137 @@ class _DetailPageState extends State<DetailPage> {
                   releaseDate: '',
                   character: 'Pemeran',
                 ))
-            .toList(),
-        isDark,
-        textColor,
-        subTextColor,
-      );
-    }
+            .toList();
 
-    return FutureBuilder<List<ActorCredit>>(
-      future: _creditsFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return SizedBox(
-            height: 120,
-            child: Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  color: primaryBlue,
-                  strokeWidth: 2,
-                ),
-              ),
-            ),
-          );
-        }
-
-        final List<ActorCredit> credits = snapshot.data ?? [];
-        if (credits.isEmpty) {
-          return _buildActorsList(
-            dummyActors
-                .take(6)
-                .map((a) => ActorCredit(
-                      id: a.id,
-                      title: a.name,
-                      profilePath: a.profilePath,
-                      releaseDate: '',
-                      character: 'Pemeran',
-                    ))
-                .toList(),
-            isDark,
-            textColor,
-            subTextColor,
-          );
-        }
-
-        return _buildActorsList(credits, isDark, textColor, subTextColor);
+    context.push(
+      '/credits',
+      extra: {
+        'title': 'Semua Pemeran',
+        'cast': castData,
+        'apiService': _apiService,
       },
     );
   }
 
-  Widget _buildActorsList(
-    List<ActorCredit> credits,
+  void _showAllCrew(
+    BuildContext context,
+    bool isDark,
+    Color textColor,
+    Color primaryBlue,
+  ) {
+    final List<MovieCrewMember> crewData =
+        _crewList.isNotEmpty ? _crewList : dummyCrew;
+
+    context.push(
+      '/credits',
+      extra: {
+        'title': 'Semua Tim Kru',
+        'crew': crewData,
+        'apiService': _apiService,
+      },
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET PEMBANTU: SECTION TEMPAT MENONTON (WATCH PROVIDERS)
+  // ===========================================================================
+  Widget _buildWatchProvidersSection(
     bool isDark,
     Color textColor,
     Color subTextColor,
+    Color primaryBlue,
   ) {
+    final List<WatchProvider> providers = _providersList.isNotEmpty
+        ? _providersList
+        : dummyProviders;
+
     return SizedBox(
-      height: 125,
+      height: 60,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: credits.length,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: providers.length,
         itemBuilder: (context, index) {
-          final cast = credits[index];
-          final String photoUrl = cast.profileUrl;
-          final String castHeroTag = 'cast_${cast.id}';
-
-          return GestureDetector(
-            onTap: () {
-              if (cast.id > 0) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ActorDetailPage(
-                      Actor(
-                        id: cast.id,
-                        name: cast.title,
-                        profilePath: cast.profilePath,
+          final provider = providers[index];
+          final Color cardBg = Theme.of(context).cardColor;
+          return Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Material(
+              color: cardBg,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Membuka platform ${provider.name}...'),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: provider.logoUrl.isNotEmpty
+                            ? Image.network(
+                                provider.logoUrl,
+                                width: 34,
+                                height: 34,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) => Container(
+                                  width: 34,
+                                  height: 34,
+                                  color: isDark ? Colors.white12 : Colors.black12,
+                                  child: Icon(
+                                    Icons.play_circle_fill,
+                                    color: primaryBlue,
+                                    size: 20,
+                                  ),
+                                ),
+                              )
+                            : Container(
+                                width: 34,
+                                height: 34,
+                                color: isDark ? Colors.white12 : Colors.black12,
+                                child: Icon(
+                                  Icons.play_circle_fill,
+                                  color: primaryBlue,
+                                  size: 20,
+                                ),
+                              ),
                       ),
-                      apiService: _apiService,
-                      heroTag: castHeroTag,
-                      imageUrl: photoUrl,
-                    ),
+                      const SizedBox(width: 10),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            provider.name,
+                            style: TextStyle(
+                              color: Theme.of(context).textTheme.bodyMedium?.color ?? textColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            provider.typeLabel,
+                            style: TextStyle(
+                              color: Theme.of(context).textTheme.bodySmall?.color ?? subTextColor,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                );
-              }
-            },
-            child: Container(
-              width: 84,
-              margin: const EdgeInsets.symmetric(horizontal: 6),
-              child: Column(
-                children: [
-                  Hero(
-                    tag: castHeroTag,
-                    child: CircleAvatar(
-                      radius: 30,
-                      backgroundColor: isDark
-                          ? const Color(0xFF2C2C34)
-                          : Colors.grey.shade300,
-                      backgroundImage:
-                          photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
-                      child: photoUrl.isEmpty
-                          ? const Icon(Icons.person, color: Colors.grey)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    cast.title,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    cast.character,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: subTextColor,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           );
@@ -592,12 +1014,273 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
+  // ===========================================================================
+  // WIDGET PEMBANTU: SECTION PEMERAN (CAST TMDB)
+  // ===========================================================================
+  Widget _buildCastSection(
+    bool isDark,
+    Color textColor,
+    Color subTextColor,
+    Color primaryBlue,
+  ) {
+    final List<ActorCredit> castMembers = _castList.isNotEmpty
+        ? _castList.take(15).toList()
+        : dummyActors
+            .take(10)
+            .map((a) => ActorCredit(
+                  id: a.id,
+                  title: a.name,
+                  profilePath: a.profilePath,
+                  releaseDate: '',
+                  character: 'Pemeran',
+                ))
+            .toList();
+
+    return SizedBox(
+      height: 190,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: castMembers.length,
+        itemBuilder: (context, index) {
+          final cast = castMembers[index];
+          final String photoUrl = cast.profileUrl;
+          final String castHeroTag = 'cast_${cast.id}_$index';
+
+          return Container(
+            width: 110,
+            margin: const EdgeInsets.only(right: 12),
+            child: Material(
+              color: isDark ? const Color(0xFF1B2335) : const Color(0xFFF1F4F9),
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  if (cast.id > 0) {
+                    context.push(
+                      '/actor/${cast.id}',
+                      extra: {
+                        'actor': Actor(
+                          id: cast.id,
+                          name: cast.title,
+                          profilePath: cast.profilePath,
+                        ),
+                        'apiService': _apiService,
+                        'heroTag': castHeroTag,
+                        'imageUrl': photoUrl,
+                      },
+                    );
+                  }
+                },
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Hero(
+                        tag: castHeroTag,
+                        child: CircleAvatar(
+                          radius: 28,
+                          backgroundColor: isDark
+                              ? const Color(0xFF2C3240)
+                              : Colors.grey.shade300,
+                          backgroundImage: photoUrl.isNotEmpty
+                              ? NetworkImage(photoUrl)
+                              : null,
+                          child: photoUrl.isEmpty
+                              ? const Icon(Icons.person,
+                                  color: Colors.grey, size: 28)
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        cast.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        cast.character.isNotEmpty
+                            ? cast.character
+                            : 'Pemeran',
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: primaryBlue.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: primaryBlue.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Text(
+                          index < 3 ? 'Peran Utama' : 'Peran Pendukung',
+                          style: TextStyle(
+                            color: primaryBlue,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET PEMBANTU: SECTION TIM / CREW
+  // ===========================================================================
+  Widget _buildCrewSection(
+    bool isDark,
+    Color textColor,
+    Color subTextColor,
+    Color primaryBlue,
+  ) {
+    final List<MovieCrewMember> crewMembers = _crewList.isNotEmpty
+        ? _crewList.take(15).toList()
+        : dummyCrew.take(10).toList();
+
+    return SizedBox(
+      height: 190,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: crewMembers.length,
+        itemBuilder: (context, index) {
+          final crew = crewMembers[index];
+          final String photoUrl = crew.profileUrl;
+
+          return Container(
+            width: 110,
+            margin: const EdgeInsets.only(right: 12),
+            child: Material(
+              color: isDark ? const Color(0xFF1B2335) : const Color(0xFFF1F4F9),
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                          '${crew.name} (${translateCrewRole(crew.job.isNotEmpty ? crew.job : crew.department)})'),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor: isDark
+                            ? const Color(0xFF2C3240)
+                            : Colors.grey.shade300,
+                        backgroundImage: photoUrl.isNotEmpty
+                            ? NetworkImage(photoUrl)
+                            : null,
+                        child: photoUrl.isEmpty
+                            ? const Icon(Icons.person,
+                                color: Colors.grey, size: 28)
+                            : null,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        crew.name,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        translateCrewRole(crew.department.isNotEmpty
+                            ? crew.department
+                            : (crew.job.isNotEmpty ? crew.job : 'Tim Produksi')),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color:
+                              const Color(0xFF6366F1).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: const Color(0xFF6366F1)
+                                .withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Text(
+                          translateCrewRole(crew.job.isNotEmpty ? crew.job : 'Kru'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF818CF8),
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // WIDGET PEMBANTU: STAT ITEM (3 KOLOM STATISTIK)
+  // ===========================================================================
   Widget _buildStatItem(
     IconData icon,
     Color iconColor,
     String value,
     String label,
     Color subTextColor,
+    Color textColor,
   ) {
     return Expanded(
       child: Column(
@@ -607,18 +1290,27 @@ class _DetailPageState extends State<DetailPage> {
             children: [
               Icon(icon, color: iconColor, size: 18),
               const SizedBox(width: 6),
-              Text(
-                value,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
+              Flexible(
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          Text(label, style: TextStyle(color: subTextColor, fontSize: 11)),
+          Text(
+            label,
+            style: TextStyle(color: subTextColor, fontSize: 11),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
       ),
     );
@@ -746,7 +1438,7 @@ class _DetailPageState extends State<DetailPage> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'dari ${currentDrama.watchers.isNotEmpty ? currentDrama.watchers : '10.3K'} pengguna',
+                              'dari ${currentDrama.watchers.isNotEmpty && currentDrama.watchers != '0' ? currentDrama.watchers : '0'} pengguna',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -897,7 +1589,7 @@ class _DetailPageState extends State<DetailPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'dari ${currentDrama.watchers.isNotEmpty ? currentDrama.watchers : '10.3K'} pengguna',
+                  'dari ${currentDrama.watchers.isNotEmpty && currentDrama.watchers != '0' ? currentDrama.watchers : '0'} pengguna',
                   style: TextStyle(color: subTextColor, fontSize: 11),
                 ),
               ],

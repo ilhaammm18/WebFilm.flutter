@@ -32,6 +32,7 @@ class Drama {
   DateTime? dateCompleted;
   String _originalLanguage;
   List<int> _genreIds;
+  int? _runtime;
 
   // ==========================================
   // CONSTRUCTOR (BLUEPRINT PEMBANGUN OBJEK)
@@ -67,7 +68,10 @@ class Drama {
     this.dateCompleted,
     String originalLanguage = '',
     List<int>? genreIds,
+    int? runtime,
   })  : _id = (id >= 0) ? id : 0,
+        // ignore: prefer_initializing_formals
+        _runtime = runtime,
         _mediaType = (mediaType != null && mediaType.trim().isNotEmpty)
             ? mediaType.trim()
             : ((genre.toLowerCase().contains('film') || episodes == 1)
@@ -256,7 +260,7 @@ class Drama {
       _status = 'Selesai';
     } else if (_watchedEpisodes > 0) {
       _status = 'Sedang Menonton';
-    } else {
+    } else if (_status != 'Sedang Menonton') {
       _status = 'Rencana Ditonton';
     }
   }
@@ -348,6 +352,22 @@ class Drama {
     _synopsis = value.trim();
   }
 
+  /// Getter alias untuk overview / sinopsis film (TMDB API overview)
+  String? get overview => _synopsis.trim().isNotEmpty ? _synopsis : null;
+
+  /// Setter untuk overview / sinopsis film
+  set overview(String? value) {
+    _synopsis = value?.trim() ?? '';
+  }
+
+  /// Getter alias untuk deskripsi / overview / sinopsis film
+  String? get description => overview;
+
+  /// Setter untuk deskripsi film
+  set description(String? value) {
+    _synopsis = value?.trim() ?? '';
+  }
+
   /// Getter untuk informasi masa tayang (aired)
   String get aired => _aired;
 
@@ -363,6 +383,19 @@ class Drama {
   set duration(String value) {
     _duration = value.trim();
   }
+
+  /// Getter untuk runtime durasi dalam menit
+  // ignore: unnecessary_getters_setters
+  int? get runtime => _runtime;
+
+  /// Setter untuk runtime durasi dalam menit
+  // ignore: unnecessary_getters_setters
+  set runtime(int? value) {
+    _runtime = value;
+  }
+
+  /// Getter alias untuk daftar genre film (TMDB genres)
+  List<String> get genres => List.unmodifiable(_genresList);
 
   /// Getter untuk rating usia konten (15+, 18+, dll)
   String get contentRating => _contentRating;
@@ -502,6 +535,7 @@ class Drama {
     DateTime? dateCompleted,
     String? originalLanguage,
     List<int>? genreIds,
+    int? runtime,
   }) {
     return Drama(
       id: id ?? _id,
@@ -532,6 +566,7 @@ class Drama {
       dateCompleted: dateCompleted ?? this.dateCompleted,
       originalLanguage: originalLanguage ?? _originalLanguage,
       genreIds: genreIds ?? List<int>.from(_genreIds),
+      runtime: runtime ?? _runtime,
     );
   }
 
@@ -555,15 +590,31 @@ class Drama {
         (json['original_name'] as String? ?? title);
     final String releaseDate = json['release_date'] as String? ??
         (json['first_air_date'] as String? ?? '');
-    final String overview =
-        json['overview'] as String? ?? 'Tidak ada sinopsis.';
+    final String overview = json['overview'] as String? ?? '';
     final int voteCount = json['vote_count'] as int? ?? 0;
     final double pop = (json['popularity'] as num?)?.toDouble() ?? 0.0;
     final String origLang = json['original_language'] as String? ?? '';
+    int? runtime = (json['runtime'] as num?)?.toInt();
+    if (runtime == null || runtime <= 0) {
+      if (json['episode_run_time'] is List &&
+          (json['episode_run_time'] as List).isNotEmpty) {
+        runtime = ((json['episode_run_time'] as List).first as num?)?.toInt();
+      }
+    }
     final List<int> gIds = (json['genre_ids'] as List<dynamic>?)
             ?.map((e) => (e as num).toInt())
             .toList() ??
         <int>[];
+
+    final List<dynamic>? rawGenres = json['genres'] as List<dynamic>?;
+    final List<String> parsedGenres = (rawGenres != null && rawGenres.isNotEmpty)
+        ? rawGenres
+            .map((g) => (g is Map<String, dynamic> ? (g['name'] as String? ?? '') : ''))
+            .where((s) => s.isNotEmpty)
+            .toList()
+        : (json['genresList'] is List
+            ? (json['genresList'] as List).map((e) => e.toString()).toList()
+            : [defaultGenre]);
 
     DateTime? dateCompleted;
     if (json['date_completed'] != null) {
@@ -582,15 +633,46 @@ class Drama {
 
     final bool isMovieType = detectedMediaType == 'movie';
 
+    String formattedDuration = '';
+    if (runtime != null && runtime > 0) {
+      final int h = runtime ~/ 60;
+      final int m = runtime % 60;
+      if (h > 0 && m > 0) {
+        formattedDuration = '${h}j ${m}m';
+      } else if (h > 0) {
+        formattedDuration = '${h}j';
+      } else {
+        formattedDuration = '${m}m';
+      }
+    } else if (json['duration'] != null &&
+        json['duration'].toString().trim().isNotEmpty) {
+      formattedDuration = json['duration'].toString().trim();
+    }
+
+    final int? rawEpisodes = (json['number_of_episodes'] as num?)?.toInt() ??
+        (json['episodes'] as num?)?.toInt();
+    final int eps = isMovieType ? 1 : (rawEpisodes ?? 0);
+
+    final String dynamicCategory = getCategoryLabel(
+      mediaType: detectedMediaType,
+      originalLanguage: origLang,
+      genreIds: gIds,
+    );
+
+    final String initialGenre =
+        (parsedGenres.isNotEmpty && parsedGenres.first != 'Film')
+            ? parsedGenres.first
+            : (defaultGenre != 'Film' ? defaultGenre : dynamicCategory);
+
     return Drama(
       id: id,
       mediaType: detectedMediaType,
       backdrop: backdropUrl,
       title: title,
       koreanTitle: originalTitle,
-      genre: defaultGenre,
+      genre: initialGenre,
       rating: double.parse(voteAverage.toStringAsFixed(1)),
-      episodes: isMovieType ? 1 : 16,
+      episodes: eps,
       watchedEpisodes: 0,
       status: 'Rencana Ditonton',
       priority: 'Sedang',
@@ -599,24 +681,236 @@ class Drama {
       date: releaseDate,
       image: imageUrl,
       rank: '#1',
-      popularity: '${pop.toInt()}',
+      popularity: '${pop.round()}',
       watchers: '$voteCount',
       synopsis: overview,
       aired: releaseDate,
-      duration: isMovieType ? '120 menit' : '60 menit',
+      duration: formattedDuration,
       contentRating: '13+',
-      genresList: [defaultGenre],
+      genresList: parsedGenres.isNotEmpty && parsedGenres.first != 'Film'
+          ? parsedGenres
+          : [dynamicCategory],
       tagsList: ['TMDB'],
       dateCompleted: dateCompleted,
       originalLanguage: origLang,
       genreIds: gIds,
+      runtime: runtime,
     );
+  }
+
+  /// Logika penentuan label kategori akurat berdasarkan TMDB metadata
+  static String getCategoryLabel({
+    String? mediaType,
+    String? originalLanguage,
+    List<int>? genreIds,
+    List<String>? genres,
+    Drama? drama,
+  }) {
+    final String type = (mediaType ??
+            drama?.mediaType ??
+            (drama?.episodes == 1 ? 'movie' : 'tv'))
+        .trim()
+        .toLowerCase();
+    final String lang = (originalLanguage ?? drama?.originalLanguage ?? '')
+        .trim()
+        .toLowerCase();
+    final List<int> gIds = genreIds ?? drama?.genreIds ?? <int>[];
+
+    final bool hasAnim = gIds.contains(16) ||
+        (genres?.any((g) =>
+                g.toLowerCase().contains('anime') ||
+                g.toLowerCase().contains('anim')) ??
+            false) ||
+        (drama?.genre.toLowerCase().contains('anime') ?? false) ||
+        (drama?.genre.toLowerCase().contains('anim') ?? false) ||
+        (drama?.genresList.any((g) =>
+                g.toLowerCase().contains('anime') ||
+                g.toLowerCase().contains('anim')) ??
+            false);
+
+    // 1. Jika genre_ids mengandung 16 dan original_language == 'ja' -> Anime
+    if (hasAnim &&
+        (lang == 'ja' ||
+            lang == 'jp' ||
+            (drama?.genre.toLowerCase().contains('jepang') ?? false))) {
+      return 'Anime';
+    }
+
+    // 2. Jika genre_ids mengandung 16 (selain Jepang) -> Animasi
+    if (hasAnim) {
+      return 'Animasi';
+    }
+
+    // 3. Jika media_type == 'tv' (atau serial TV):
+    if (type == 'tv') {
+      if (lang == 'ko' ||
+          lang == 'kr' ||
+          (drama?.genre.toLowerCase().contains('korea') ?? false)) {
+        return 'Drama Korea';
+      } else if (lang == 'zh' ||
+          lang == 'cn' ||
+          (drama?.genre.toLowerCase().contains('china') ?? false) ||
+          (drama?.genre.toLowerCase().contains('mandarin') ?? false)) {
+        return 'Drama China';
+      } else if (lang == 'ja' ||
+          lang == 'jp' ||
+          (drama?.genre.toLowerCase().contains('jepang') ?? false)) {
+        return 'Drama Jepang';
+      } else if (lang == 'en' ||
+          lang == 'us' ||
+          (drama?.genre.toLowerCase().contains('barat') ?? false) ||
+          (drama?.genre.toLowerCase().contains('western') ?? false)) {
+        return 'Drama Barat';
+      } else {
+        return 'Serial TV';
+      }
+    }
+
+    // 4. Jika media_type == 'movie' (atau film):
+    if (lang == 'ko' ||
+        lang == 'kr' ||
+        (drama?.genre.toLowerCase().contains('korea') ?? false)) {
+      return 'Film Korea';
+    } else if (lang == 'id' ||
+        (drama?.genre.toLowerCase().contains('indonesia') ?? false)) {
+      return 'Film Indonesia';
+    } else if (lang == 'ja' ||
+        lang == 'jp' ||
+        (drama?.genre.toLowerCase().contains('jepang') ?? false)) {
+      return 'Film Jepang';
+    } else if (lang == 'en' ||
+        lang == 'us' ||
+        (drama?.genre.toLowerCase().contains('barat') ?? false) ||
+        (drama?.genre.toLowerCase().contains('western') ?? false)) {
+      return 'Film Barat';
+    } else {
+      return 'Film';
+    }
   }
 
   factory Drama.fromTmdbMovieJson(Map<String, dynamic> json) =>
       Drama.fromTmdbJson(json);
 
   factory Drama.fromJson(Map<String, dynamic> json) => Drama.fromTmdbJson(json);
+
+  /// Factory constructor untuk memetakan row data dari tabel Supabase ('watchlists')
+  factory Drama.fromSupabase(Map<String, dynamic> map) {
+    int dramaId = 0;
+    final rawId = map['tmdb_id'] ?? map['drama_id'] ?? map['id'];
+    if (rawId is num) {
+      dramaId = rawId.toInt();
+    } else if (rawId != null) {
+      dramaId = int.tryParse(rawId.toString()) ?? 0;
+    }
+
+    final String title = map['judul_film'] as String? ??
+        map['title'] as String? ??
+        'Untitled';
+    final String koreanTitle = map['korean_title'] as String? ?? title;
+    final String genre = map['genre'] as String? ?? 'General';
+    final double? rawRating = (map['rating'] as num?)?.toDouble() ??
+        (map['user_rating'] as num?)?.toDouble() ??
+        (map['my_rating'] as num?)?.toDouble();
+    final double userRating = rawRating ?? 0.0;
+    final double rating = userRating;
+    final int episodes = (map['episodes'] as num?)?.toInt() ?? 0;
+    final int watchedEpisodes = (map['watched_episodes'] as num?)?.toInt() ?? 0;
+    final String status = map['status'] as String? ?? 'Sedang Menonton';
+    final String priority = map['priority'] as String? ?? 'Sedang';
+    final String startDate = map['start_date'] as String? ?? '';
+    final String endDate = map['end_date'] as String? ?? '';
+    final String date = map['date'] as String? ?? '';
+    final String image = map['image'] as String? ?? '';
+    final String backdrop = map['backdrop'] as String? ?? image;
+    final String rank = map['rank'] as String? ?? '#1';
+    final String popularity = map['popularity'] as String? ?? '100';
+    final String watchers = map['watchers'] as String? ?? '10K';
+    final String synopsis = map['synopsis'] as String? ?? '';
+    final String aired = map['aired'] as String? ?? '';
+    final String duration = map['duration'] as String? ?? '60 menit';
+    final String contentRating = map['content_rating'] as String? ?? '13+';
+    final String mediaType = map['media_type'] as String? ??
+        (genre.toLowerCase().contains('film') || episodes == 1 ? 'movie' : 'tv');
+    final String originalLanguage = map['original_language'] as String? ??
+        (map['originalLanguage'] as String? ?? '');
+
+    DateTime? dateCompleted;
+    if (map['date_completed'] != null) {
+      dateCompleted = DateTime.tryParse(map['date_completed'].toString());
+    }
+
+    List<String> genresList = [];
+    if (map['genres_list'] is List) {
+      genresList = (map['genres_list'] as List).map((e) => e.toString()).toList();
+    } else {
+      genresList = [genre];
+    }
+
+    List<String> tagsList = [];
+    if (map['tags_list'] is List) {
+      tagsList = (map['tags_list'] as List).map((e) => e.toString()).toList();
+    } else {
+      tagsList = ['Watchlist'];
+    }
+
+    final int? runtime = (map['runtime'] as num?)?.toInt();
+    List<int> genreIds = [];
+    if (map['genre_ids'] is List) {
+      genreIds = (map['genre_ids'] as List)
+          .map((e) => (e as num).toInt())
+          .toList();
+    }
+
+    return Drama(
+      id: dramaId,
+      mediaType: mediaType,
+      backdrop: backdrop,
+      title: title,
+      koreanTitle: koreanTitle,
+      genre: genre,
+      rating: rating,
+      userRating: userRating,
+      myRating: userRating,
+      episodes: episodes,
+      watchedEpisodes: watchedEpisodes,
+      status: status,
+      priority: priority,
+      startDate: startDate,
+      endDate: endDate,
+      date: date,
+      image: image,
+      rank: rank,
+      popularity: popularity,
+      watchers: watchers,
+      synopsis: synopsis,
+      aired: aired,
+      duration: duration,
+      contentRating: contentRating,
+      genresList: genresList,
+      tagsList: tagsList,
+      dateCompleted: dateCompleted,
+      originalLanguage: originalLanguage,
+      genreIds: genreIds,
+      runtime: runtime,
+    );
+  }
+
+  /// Mengonversi objek Drama ke Map JSON payload untuk Supabase
+  Map<String, dynamic> toSupabaseJson({String? userId}) {
+    return {
+      if (userId != null && userId.isNotEmpty) 'user_id': userId,
+      'tmdb_id': id,
+      'judul_film': title,
+      'title': title,
+      'media_type': mediaType,
+      'original_language': originalLanguage,
+      'episodes': episodes,
+      'status': status,
+      'rating': userRating ?? myRating ?? 0.0,
+      if (dateCompleted != null)
+        'date_completed': dateCompleted!.toIso8601String(),
+    };
+  }
 
   @override
   String toString() {

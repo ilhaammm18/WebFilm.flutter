@@ -11,7 +11,7 @@ void main() {
   });
 
   group('WatchlistTab Rating Display & Edit Sync Tests', () {
-    testWidgets('Status Selesai dan userRating > 0 menampilkan userRating, jika belum menampilkan global rating', (tester) async {
+    testWidgets('Status Selesai menampilkan userRating dari Supabase, dengan fallback 0.0 jika null', (tester) async {
       final dramaSelesaiDenganUserRating = Drama(
         title: 'Reply 1988',
         koreanTitle: '응답하라 1988',
@@ -81,8 +81,9 @@ void main() {
       // Drama dengan userRating 8.8 harus menampilkan '8.8'
       expect(find.text('8.8'), findsOneWidget);
 
-      // Drama tanpa userRating harus menampilkan rating global '7.9'
-      expect(find.text('7.9'), findsOneWidget);
+      // Drama tanpa userRating harus menampilkan fallback rating '0.0' (bukan global rating 7.9)
+      expect(find.text('0.0'), findsOneWidget);
+      expect(find.text('7.9'), findsNothing);
     });
 
     testWidgets('Simpan Perubahan pada slider Peringkat mengubah rating di ListView secara real-time dari 7.9 menjadi 8.8', (tester) async {
@@ -124,8 +125,9 @@ void main() {
       await tester.tap(find.text('SELESAI'));
       await tester.pumpAndSettle();
 
-      // Awalnya menampilkan rating global 7.9
-      expect(find.text('7.9'), findsOneWidget);
+      // Awalnya menampilkan fallback rating 0.0 (bukan global rating 7.9)
+      expect(find.text('0.0'), findsOneWidget);
+      expect(find.text('7.9'), findsNothing);
       expect(find.text('8.8'), findsNothing);
 
       // Buka modal edit melalui tombol pena
@@ -261,10 +263,10 @@ void main() {
       expect(find.text('Semua'), findsOneWidget);
       expect(find.text('Film'), findsOneWidget);
       expect(find.text('Drama'), findsOneWidget);
-      expect(find.text('Animasi'), findsOneWidget);
+      expect(find.text('Animasi'), findsWidgets);
 
-      // Pilih 'Animasi'
-      await tester.tap(find.text('Animasi'));
+      // Pilih 'Animasi' dari bottom sheet
+      await tester.tap(find.text('Animasi').last);
       await tester.pumpAndSettle();
 
       // Modal tertutup dan hanya Animasi yang muncul
@@ -455,6 +457,7 @@ void main() {
         genre: 'Drama Korea',
         mediaType: 'tv',
         rating: 8.5,
+        userRating: 8.5,
         episodes: 16,
         watchedEpisodes: 0,
         status: 'Rencana Ditonton',
@@ -480,6 +483,7 @@ void main() {
         genre: 'Film Korea',
         mediaType: 'movie',
         rating: 9.2,
+        userRating: 9.2,
         episodes: 1,
         watchedEpisodes: 0,
         status: 'Rencana Ditonton',
@@ -529,6 +533,35 @@ void main() {
       // Film hanya menampilkan rating (9.2) dan TIDAK menampilkan ikon atau angka episode
       expect(find.text('9.2'), findsOneWidget);
       expect(find.text('1'), findsNothing);
+    });
+
+    testWidgets('Tampilan Empty State muncul di ketiga tab ketika data watchlist kosong', (tester) async {
+      SharedData.dramaListNotifier.value = [];
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: WatchlistTab(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Tab 1: SEDANG MENONTON (Default)
+      expect(find.byIcon(Icons.movie_creation_outlined), findsOneWidget);
+      expect(find.text('Belum ada film di daftar ini. Yuk, cari dan tambahkan film favoritmu!'), findsOneWidget);
+
+      // Tab 2: SELESAI
+      await tester.tap(find.text('SELESAI'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.movie_creation_outlined), findsOneWidget);
+      expect(find.text('Belum ada film di daftar ini. Yuk, cari dan tambahkan film favoritmu!'), findsOneWidget);
+
+      // Tab 3: RENCANA DITONTON
+      await tester.tap(find.text('RENCANA DITONTON'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.movie_creation_outlined), findsOneWidget);
+      expect(find.text('Belum ada film di daftar ini. Yuk, cari dan tambahkan film favoritmu!'), findsOneWidget);
     });
   });
 }

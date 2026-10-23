@@ -1,12 +1,17 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../routes/app_router.dart';
 import '../widgets/app_drawer.dart';
 import '../models/drama.dart';
 import '../data/shared_data.dart';
-import 'detail_page.dart';
+import '../services/api_service.dart';
 import '../utils/helpers.dart';
+import '../widgets/edit_drama_modal.dart';
 
 class WatchlistTab extends StatefulWidget {
-  const WatchlistTab({super.key});
+  final SupabaseClient? supabaseClient;
+  final ApiService? apiService;
+  const WatchlistTab({super.key, this.supabaseClient, this.apiService});
 
   @override
   State<WatchlistTab> createState() => _WatchlistTabState();
@@ -14,6 +19,10 @@ class WatchlistTab extends StatefulWidget {
 
 class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late final ApiService _apiService;
+  static final Map<int, String> _posterCache = {};
+  static final Map<int, int> _episodesCache = {};
+  final Set<int> _loadingPosters = {};
   
   bool _isSearching = false;
   String _searchQuery = '';
@@ -24,7 +33,114 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
+    _apiService = widget.apiService ?? ApiService();
     _tabController = TabController(length: 3, vsync: this);
+    _fetchWatchlist();
+  }
+
+  SupabaseClient? get _supabaseClient {
+    if (widget.supabaseClient != null) return widget.supabaseClient;
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _fetchWatchlist() async {
+    final client = _supabaseClient;
+    if (client == null) return;
+    try {
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) {
+        SharedData.dramaListNotifier.value = [];
+        SharedData.dramaListNotifier.notifyListeners();
+        if (mounted) setState(() {});
+        return;
+      }
+      final List<dynamic> data = await client
+          .from('watchlists')
+          .select()
+          .eq('user_id', userId);
+
+      final List<Drama> list = data
+          .map((item) => Drama.fromSupabase(item as Map<String, dynamic>))
+          .toList();
+
+      // Pulihkan gambar poster & episode dari cache lokal jika sudah pernah di-fetch
+      for (final drama in list) {
+        if (drama.id > 0) {
+          if (drama.image.isEmpty && _posterCache.containsKey(drama.id)) {
+            drama.image = _posterCache[drama.id]!;
+          }
+          if (drama.episodes == 0 && _episodesCache.containsKey(drama.id)) {
+            drama.episodes = _episodesCache[drama.id]!;
+          }
+        }
+      }
+
+      SharedData.dramaListNotifier.value = List<Drama>.from(list);
+      SharedData.dramaListNotifier.notifyListeners();
+      if (mounted) {
+        setState(() {});
+      }
+
+      // Lakukan background fetch detail TMDB berdasarkan tmdb_id
+      _enrichWatchlistWithTmdb(list);
+    } catch (e) {
+      debugPrint('Error fetch watchlist: $e');
+    }
+  }
+
+  Future<void> _enrichWatchlistWithTmdb(List<Drama> list) async {
+    final itemsToEnrich = list
+        .where((d) => d.id > 0 && (d.image.isEmpty || d.episodes == 0))
+        .toList();
+    if (itemsToEnrich.isEmpty) return;
+
+    bool updated = false;
+    await Future.wait(
+      itemsToEnrich.map((drama) async {
+        try {
+          final detail = await _apiService.getMovieDetails(
+            drama.id,
+            mediaType: drama.mediaType.isNotEmpty ? drama.mediaType : null,
+          );
+          if (detail.image.isNotEmpty) {
+            _posterCache[drama.id] = detail.image;
+            drama.image = detail.image;
+            updated = true;
+          }
+          if (detail.backdrop.isNotEmpty && drama.backdrop.isEmpty) {
+            drama.backdrop = detail.backdrop;
+          }
+          if (detail.episodes > 0 && drama.episodes == 0) {
+            _episodesCache[drama.id] = detail.episodes;
+            drama.episodes = detail.episodes;
+            updated = true;
+          }
+          if (detail.originalLanguage.isNotEmpty && drama.originalLanguage.isEmpty) {
+            drama.originalLanguage = detail.originalLanguage;
+          }
+          if (detail.genre.isNotEmpty && detail.genre != 'General') {
+            drama.genre = detail.genre;
+          } else if (drama.genre == 'General' || drama.genre.isEmpty) {
+            drama.genre = detail.mediaType == 'tv' ? 'Serial TV' : 'Film';
+          }
+          if (detail.mediaType.isNotEmpty && (drama.mediaType.isEmpty || drama.mediaType == 'tv')) {
+            drama.mediaType = detail.mediaType;
+          }
+        } catch (e) {
+          debugPrint('Error enrich TMDB drama ${drama.id}: $e');
+        }
+      }),
+    );
+
+    if (updated && mounted) {
+      SharedData.dramaListNotifier.value = List<Drama>.from(list);
+      SharedData.dramaListNotifier.notifyListeners();
+      setState(() {});
+    }
   }
 
   @override
@@ -182,7 +298,7 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
                       setState(() {
                         _selectedCategory = category;
                       });
-                      Navigator.pop(context);
+                      context.pop();
                     },
                   );
                 }),
@@ -254,146 +370,250 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
         }
 
         if (filteredList.isEmpty) {
-          final String emptyMessage = _searchQuery.trim().isNotEmpty
-              ? 'Film/Drama tidak ditemukan'
-              : (_selectedCategory != 'Semua'
-                  ? 'Tidak ada $_selectedCategory yang cocok'
-                  : 'Belum ada data untuk $statusFilter');
-          return Center(
-            child: Text(
-              emptyMessage, 
-              style: TextStyle(color: subTextColor, fontSize: 15),
+          if (_searchQuery.trim().isNotEmpty) {
+            return RefreshIndicator(
+              onRefresh: _fetchWatchlist,
+              color: primaryBlue,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Text(
+                        'Film/Drama tidak ditemukan',
+                        style: TextStyle(color: subTextColor, fontSize: 15),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+          if (_selectedCategory != 'Semua') {
+            return RefreshIndicator(
+              onRefresh: _fetchWatchlist,
+              color: primaryBlue,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.5,
+                    child: Center(
+                      child: Text(
+                        'Tidak ada $_selectedCategory yang cocok',
+                        style: TextStyle(color: subTextColor, fontSize: 15),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return RefreshIndicator(
+            onRefresh: _fetchWatchlist,
+            color: primaryBlue,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.6,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.movie_creation_outlined,
+                          size: 80,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Belum ada judul di daftar ini',
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            'Belum ada film di daftar ini. Yuk, cari dan tambahkan film favoritmu!',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                              fontSize: 14,
+                              fontWeight: FontWeight.normal,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-          itemCount: filteredList.length,
-          itemBuilder: (context, index) {
-            final Drama item = filteredList[index];
-            
-            // Logika conditional penilaian:
-            // Jika statusnya 'Selesai' dan userRating > 0, maka tampilkan nilai userRating.
-            // Jika belum selesai atau belum dinilai, barulah tampilkan rating global.
-            String displayRating;
-            if (item.status == 'Selesai' && item.userRating != null && item.userRating! > 0) {
-              displayRating = item.userRating!.toStringAsFixed(1);
-            } else {
-              displayRating = item.rating.toStringAsFixed(1);
-            }
+        return RefreshIndicator(
+          onRefresh: _fetchWatchlist,
+          color: primaryBlue,
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+            itemCount: filteredList.length,
+            itemBuilder: (context, index) {
+              final Drama item = filteredList[index];
+              
+              // Tampilkan nilai rating pribadi yang ditarik langsung dari Supabase
+              // Fallback: jika nilai rating dari Supabase adalah null, tampilkan 0.0
+              final double userRatingVal = item.userRating ?? item.myRating ?? 0.0;
+              final String displayRating = userRatingVal.toStringAsFixed(1);
 
-            final String heroTag = 'poster_${item.id > 0 ? item.id : item.title}';
+              final String effectivePoster = item.image.isNotEmpty
+                  ? item.image
+                  : (_posterCache[item.id] ?? '');
 
-            return GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => DetailPage(
-                      drama: item,
-                      heroTag: heroTag,
-                      posterUrl: item.image,
+              if (effectivePoster.isEmpty && item.id > 0 && !_loadingPosters.contains(item.id)) {
+                _loadingPosters.add(item.id);
+                _apiService.getMovieDetails(item.id, mediaType: item.mediaType).then((detail) {
+                  if (detail.image.isNotEmpty) {
+                    _posterCache[item.id] = detail.image;
+                    item.image = detail.image;
+                  }
+                  if (detail.episodes > 0 && item.episodes == 0) {
+                    _episodesCache[item.id] = detail.episodes;
+                    item.episodes = detail.episodes;
+                  }
+                  if (mounted) setState(() {});
+                }).catchError((_) {}).whenComplete(() {
+                  _loadingPosters.remove(item.id);
+                });
+              }
+
+              final String heroTag = 'poster_${item.id > 0 ? item.id : item.title}';
+              final bool isTvSeries = item.mediaType == 'tv' ||
+                  (!item.isMovie && item.mediaType != 'movie' && !item.genre.toLowerCase().contains('film'));
+
+              return GestureDetector(
+                onTap: () {
+                  context.push(
+                    '/movie/${item.id}',
+                    extra: {
+                      'drama': item,
+                      'heroTag': heroTag,
+                      'posterUrl': effectivePoster.isNotEmpty ? effectivePoster : item.image,
+                    },
+                  );
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.all(12),
+                  // Tampilan card melayang (elevated) dengan bayangan lembut
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: isDark
+                            ? Colors.black.withValues(alpha: 0.35)
+                            : primaryBlue.withValues(alpha: 0.06),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                );
-              },
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 14),
-                padding: const EdgeInsets.all(12),
-                // Tampilan card melayang (elevated) dengan bayangan lembut
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.05),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: isDark
-                          ? Colors.black.withValues(alpha: 0.35)
-                          : primaryBlue.withValues(alpha: 0.06),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // POSTER DENGAN HERO ANIMATION
-                    Hero(
-                      tag: heroTag,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          item.image, 
-                          width: 72, 
-                          height: 108, 
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            width: 72, 
-                            height: 108, 
-                            color: isDark ? const Color(0xFF222734) : Colors.grey.shade300,
-                            child: const Icon(Icons.movie_rounded, color: Colors.grey),
-                          ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // POSTER DENGAN HERO ANIMATION
+                      Hero(
+                        tag: heroTag,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: effectivePoster.isNotEmpty
+                              ? Image.network(
+                                  effectivePoster,
+                                  width: 72, 
+                                  height: 108, 
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) => Container(
+                                    width: 72, 
+                                    height: 108, 
+                                    color: isDark ? const Color(0xFF222734) : Colors.grey.shade300,
+                                    child: const Icon(Icons.movie_rounded, color: Colors.grey),
+                                  ),
+                                )
+                              : (item.id > 0
+                                  ? Container(
+                                      width: 72,
+                                      height: 108,
+                                      color: isDark ? const Color(0xFF222734) : Colors.grey.shade300,
+                                      child: const Center(
+                                        child: SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
+                                      width: 72, 
+                                      height: 108, 
+                                      color: isDark ? const Color(0xFF222734) : Colors.grey.shade300,
+                                      child: const Icon(Icons.movie_rounded, color: Colors.grey),
+                                    )),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 14),
-                    
-                    // KONTEN KANAN
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.title,
-                                      style: TextStyle(
-                                        color: textColor,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold,
+                      const SizedBox(width: 14),
+                      
+                      // KONTEN KANAN
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.title,
+                                        style: TextStyle(
+                                          color: textColor,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Text(
-                                      '${item.genre.split('•')[0].trim()} • 2025',
-                                      style: TextStyle(color: subTextColor, fontSize: 12),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    if (statusFilter == 'Selesai' || item.status == 'Selesai')
-                                      // BARIS INFORMASI KHUSUS STATUS SELESAI
-                                      Row(
-                                        children: [
-                                          // Bagian 1: Rating
-                                          const Icon(Icons.star, color: Colors.amber, size: 16),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            displayRating,
-                                            style: TextStyle(
-                                              color: textColor,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 16),
-
-                                          // Bagian 2: Episode (Kondisional: HANYA JIKA mediaType == 'tv')
-                                          if (item.mediaType == 'tv') ...[
-                                            Icon(Icons.featured_play_list, color: subTextColor, size: 16),
+                                      const SizedBox(height: 5),
+                                      Text(
+                                          getDynamicLabel(drama: item),
+                                          style: TextStyle(color: subTextColor, fontSize: 12),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      const SizedBox(height: 8),
+                                      if (statusFilter == 'Selesai' || item.status == 'Selesai')
+                                        // BARIS INFORMASI KHUSUS STATUS SELESAI
+                                        Row(
+                                          children: [
+                                            // Bagian 1: Rating
+                                            const Icon(Icons.star, color: Colors.amber, size: 16),
                                             const SizedBox(width: 4),
                                             Text(
-                                              '${item.episodes}',
+                                              displayRating,
                                               style: TextStyle(
                                                 color: textColor,
                                                 fontSize: 13,
@@ -401,156 +621,198 @@ class _WatchlistTabState extends State<WatchlistTab> with SingleTickerProviderSt
                                               ),
                                             ),
                                             const SizedBox(width: 16),
-                                          ],
 
-                                          // Bagian 3: Tanggal Selesai (Format: dd/MM/yyyy, misal: '16/10/2026')
-                                          Icon(Icons.calendar_today, color: subTextColor, size: 16),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            formatDate(item.dateCompleted ?? DateTime.now()),
-                                            style: TextStyle(
-                                              color: subTextColor,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ],
-                                      )
-                                    else if (statusFilter == 'Rencana Ditonton' || item.status == 'Rencana Ditonton')
-                                      // BARIS INFORMASI KHUSUS STATUS RENCANA DITONTON (Rating + Ikon Abu-abu & Total Episode)
-                                      Row(
-                                        children: [
-                                          // Kiri: Ikon Bintang Emas dan teks Rating
-                                          const Icon(Icons.star_rounded, color: Color(0xFFFFB800), size: 16),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            displayRating,
-                                            style: TextStyle(
-                                              color: textColor,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-
-                                          // Kanan (Khusus Drama / Serial): Ikon abu-abu + Angka total episode
-                                          if (item.mediaType != 'movie' && !item.isMovie && !item.genre.toLowerCase().contains('film')) ...[
-                                            const SizedBox(width: 16),
-                                            Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.subtitles_rounded,
-                                                  size: 18.0,
-                                                  color: Colors.grey.shade400,
+                                            // Bagian 2: Episode (Kondisional: HANYA JIKA Serial TV / Drama dan episode > 0)
+                                            if (isTvSeries && item.episodes > 0) ...[
+                                              Icon(Icons.featured_play_list, color: subTextColor, size: 16),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                '${item.episodes}',
+                                                style: TextStyle(
+                                                  color: textColor,
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.bold,
                                                 ),
-                                                const SizedBox(width: 6),
-                                                Text(
-                                                  '${item.episodes}',
-                                                  style: TextStyle(
-                                                    color: isDark ? Colors.white : textColor,
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.bold,
+                                              ),
+                                              const SizedBox(width: 16),
+                                            ],
+
+                                            // Bagian 3: Tanggal Selesai (Format: dd/MM/yyyy, misal: '16/10/2026')
+                                            Icon(Icons.calendar_today, color: subTextColor, size: 16),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              formatDate(item.dateCompleted ?? DateTime.now()),
+                                              style: TextStyle(
+                                                color: subTextColor,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      else if (statusFilter == 'Rencana Ditonton' || item.status == 'Rencana Ditonton')
+                                        // BARIS INFORMASI KHUSUS STATUS RENCANA DITONTON (Rating + Ikon Abu-abu & Total Episode)
+                                        Row(
+                                          children: [
+                                            // Kiri: Ikon Bintang Emas dan teks Rating
+                                            const Icon(Icons.star_rounded, color: Color(0xFFFFB800), size: 16),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              displayRating,
+                                              style: TextStyle(
+                                                color: textColor,
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+
+                                            // Kanan (Khusus Drama / Serial): Ikon abu-abu + Angka total episode jika > 0
+                                            if (isTvSeries && item.episodes > 0) ...[
+                                              const SizedBox(width: 16),
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.subtitles_rounded,
+                                                    size: 18.0,
+                                                    color: Colors.grey.shade400,
                                                   ),
-                                                ),
-                                              ],
-                                            ),
+                                                  const SizedBox(width: 6),
+                                                  Text(
+                                                    '${item.episodes}',
+                                                    style: TextStyle(
+                                                      color: isDark ? Colors.white : textColor,
+                                                      fontSize: 14,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
                                           ],
-                                        ],
-                                      )
-                                    else
-                                      Row(
-                                        children: [
-                                          const Icon(Icons.star_rounded, color: Color(0xFFFFB800), size: 16),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            displayRating,
-                                            style: TextStyle(
-                                              color: textColor,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold,
+                                        )
+                                      else
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.star_rounded, color: Color(0xFFFFB800), size: 16),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              displayRating,
+                                              style: TextStyle(
+                                                color: textColor,
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
-                                          ),
-                                        ],
+                                            if (isTvSeries && item.episodes > 0) ...[
+                                              const SizedBox(width: 16),
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.featured_play_list,
+                                                    size: 16.0,
+                                                    color: subTextColor,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    '${item.episodes}',
+                                                    style: TextStyle(
+                                                      color: textColor,
+                                                      fontSize: 13,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                // TOMBOL EDIT (PENA)
+                                GestureDetector(
+                                  onTap: () async {
+                                    await showModalBottomSheet(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (context) => EditDramaModal(
+                                        drama: item,
+                                        apiService: _apiService,
                                       ),
+                                    );
+                                    if (mounted) setState(() {});
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.all(7),
+                                    decoration: BoxDecoration(
+                                      color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade100, 
+                                      borderRadius: BorderRadius.circular(9),
+                                    ),
+                                    child: Icon(Icons.edit_outlined, color: subTextColor, size: 18),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            
+                            // HANYA UNTUK STATUS 'Sedang Menonton' (Bukan Selesai dan Bukan Rencana Ditonton)
+                            if (statusFilter == 'Sedang Menonton' ||
+                                (statusFilter != 'Selesai' &&
+                                    statusFilter != 'Rencana Ditonton' &&
+                                    item.status == 'Sedang Menonton')) ...[
+                              if (isTvSeries) ...[
+                                const SizedBox(height: 10),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      item.episodes > 0
+                                          ? 'Progres: ${item.watchedEpisodes}/${item.episodes}'
+                                          : 'Progres: ${item.watchedEpisodes} Eps', 
+                                      style: TextStyle(
+                                        color: subTextColor,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${item.progressPercentInt}%',
+                                      style: TextStyle(
+                                        color: statusFilter == 'Sedang Menonton' ? primaryBlue : subTextColor,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
                                   ],
                                 ),
-                              ),
-                              // TOMBOL EDIT (PENA)
-                              GestureDetector(
-                                onTap: () async {
-                                  await showModalBottomSheet(
-                                    context: context,
-                                    isScrollControlled: true,
-                                    backgroundColor: Colors.transparent,
-                                    builder: (context) => EditDramaModal(drama: item),
-                                  );
-                                  if (mounted) setState(() {});
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.all(7),
-                                  decoration: BoxDecoration(
-                                    color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade100, 
-                                    borderRadius: BorderRadius.circular(9),
-                                  ),
-                                  child: Icon(Icons.edit_outlined, color: subTextColor, size: 18),
-                                ),
-                              ),
-                            ],
-                          ),
-                          
-                          // HANYA UNTUK STATUS 'Sedang Menonton' (Bukan Selesai dan Bukan Rencana Ditonton)
-                          if (statusFilter == 'Sedang Menonton' ||
-                              (statusFilter != 'Selesai' &&
-                                  statusFilter != 'Rencana Ditonton' &&
-                                  item.status == 'Sedang Menonton')) ...[
-                            if (item.mediaType != 'movie' && !item.isMovie && !item.genre.toLowerCase().contains('film')) ...[
-                              const SizedBox(height: 10),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    'Progres: ${item.watchedEpisodes}/${item.episodes}', 
-                                    style: TextStyle(
-                                      color: subTextColor,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${item.progressPercentInt}%',
-                                    style: TextStyle(
-                                      color: statusFilter == 'Sedang Menonton' ? primaryBlue : subTextColor,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
 
-                              const SizedBox(height: 6),
-                              
-                              // GARIS PROGRESS BAR
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: LinearProgressIndicator(
-                                  value: item.progressPercentage,
-                                  backgroundColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    statusFilter == 'Sedang Menonton' ? primaryBlue : Colors.grey.shade600,
+                                const SizedBox(height: 6),
+                                
+                                // GARIS PROGRESS BAR
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: item.progressPercentage,
+                                    backgroundColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      statusFilter == 'Sedang Menonton' ? primaryBlue : Colors.grey.shade600,
+                                    ),
+                                    minHeight: 3,
                                   ),
-                                  minHeight: 3,
                                 ),
-                              ),
+                              ],
                             ],
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );

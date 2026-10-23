@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'explore_tab.dart'; // Tab 1: Jelajahi
 // Pastikan kamu punya file ini. Jika belum ada isinya, buat dummy sementara.
 import 'watchlist_tab.dart'; // Tab 2: Daftar
@@ -10,7 +11,8 @@ import '../data/shared_data.dart';
 ValueNotifier<int> globalNavIndex = ValueNotifier<int>(0);
 
 class MainNavigation extends StatefulWidget {
-  const MainNavigation({super.key});
+  final List<Widget>? pages;
+  const MainNavigation({super.key, this.pages});
 
   @override
   State<MainNavigation> createState() => _MainNavigationState();
@@ -18,18 +20,34 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   // Daftar halaman yang akan ditampilkan pada setiap tab
-  final List<Widget> _pages = const [
-    ExploreTab(),
-    WatchlistTab(),
-    RankingTab(), // Menggunakan Ranking sebagai pengganti Feed sesuai kesepakatan
-    ProfileTab(),
-  ];
+  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
-    // Mensinkronkan data TMDB untuk Watchlist & Profil
-    SharedData.syncWithTmdb();
+    _pages = widget.pages ??
+        const [
+          ExploreTab(),
+          WatchlistTab(),
+          RankingTab(), // Menggunakan Ranking sebagai pengganti Feed sesuai kesepakatan
+          ProfileTab(),
+        ];
+
+    // Jika user sedang aktif login di Supabase, ambil data watchlist & riwayat miliknya saja
+    if (widget.pages == null) {
+      String? userId;
+      try {
+        userId = Supabase.instance.client.auth.currentUser?.id;
+      } catch (_) {}
+
+      if (userId != null) {
+        SharedData.fetchUserWatchlist();
+        // SharedData.fetchUserRiwayat(); // Riwayat dinonaktifkan
+        SharedData.fetchUserProfile();
+      } else {
+        SharedData.syncWithTmdb();
+      }
+    }
 
     // Mendengarkan perubahan pada globalNavIndex
     globalNavIndex.addListener(_onNavIndexChanged);
@@ -49,32 +67,45 @@ class _MainNavigationState extends State<MainNavigation> {
 
   @override
   Widget build(BuildContext context) {
-    bool isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    // Warna untuk menu bawah
-    Color bgColor = isDark ? const Color(0xFF15171E) : Colors.white;
-    Color selectedColor = const Color(0xFF0094FF); // Biru primary
-    Color unselectedColor = isDark ? Colors.grey.shade500 : Colors.grey.shade400;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 1. Warna latar belakang navigasi yang solid menyesuaikan tema
+    final Color bgColor = Theme.of(context).bottomNavigationBarTheme.backgroundColor ??
+        (isDark ? Theme.of(context).scaffoldBackgroundColor : Colors.white);
+
+    // 2. Aksen Biru untuk menu yang aktif (selected)
+    const Color selectedColor = Color(0xFF0094FF);
+
+    // 3. Kontras warna abu-abu adaptif yang lebih gelap untuk menu tidak aktif (unselected)
+    final Color unselectedColor =
+        isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+
+    // Warna pembatas atas tipis untuk mempertegas batas konten
+    final Color topBorderColor =
+        isDark ? const Color(0xFF2A2E39) : Colors.grey.shade300;
 
     return Scaffold(
       body: _pages[globalNavIndex.value],
-      
-      // MENGHILANGKAN GARIS NAVIGASI BAWAH
-      // Kita bungkus dengan Theme untuk memodifikasi pengaturan bawaan Material
+
       bottomNavigationBar: Theme(
         data: Theme.of(context).copyWith(
-          // Memastikan background navigasinya menyatu tanpa garis pemisah di atasnya
           splashColor: Colors.transparent,
           highlightColor: Colors.transparent,
         ),
         child: Container(
-          // Menambahkan border transparan atau shadow sangat halus untuk menghindari garis kaku
+          // Mempertegas batas antara konten halaman dengan navigasi bawah
           decoration: BoxDecoration(
             color: bgColor,
+            border: Border(
+              top: BorderSide(
+                color: topBorderColor,
+                width: 1.0,
+              ),
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.0 : 0.05),
-                blurRadius: 10,
+                color: Colors.black.withValues(alpha: isDark ? 0.30 : 0.08),
+                blurRadius: 8,
                 offset: const Offset(0, -2),
               ),
             ],
@@ -86,7 +117,7 @@ class _MainNavigationState extends State<MainNavigation> {
             },
             backgroundColor: bgColor,
             type: BottomNavigationBarType.fixed, // Pastikan fixed agar semua ikon muncul dan tidak goyang
-            elevation: 0, // KUNCI UTAMA menghilangkan garis bayangan bawaan
+            elevation: 8, // Memberikan elevasi untuk mempertegas batas navigasi
             selectedItemColor: selectedColor,
             unselectedItemColor: unselectedColor,
             selectedFontSize: 12,

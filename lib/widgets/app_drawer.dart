@@ -1,25 +1,16 @@
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
-import '../screens/customer_service_page.dart';
-import '../screens/edit_profile_page.dart';
-import '../screens/friends_page.dart';
-import '../screens/login_page.dart';
+﻿import 'package:flutter/material.dart';
+import '../routes/app_router.dart';
+import '../data/shared_data.dart';
 import '../main.dart';
-import '../screens/main_navigation.dart';
-import '../screens/settings_page.dart';
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({super.key});
 
-  void _showComingSoonSnackBar(BuildContext context, String menuName) {
-    final messenger = ScaffoldMessenger.of(context);
-    Navigator.pop(context); // Tutup drawer
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text('Halaman $menuName sedang dikembangkan'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+  ImageProvider _resolveAvatarImage(String url) {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return NetworkImage(url);
+    }
+    return AssetImage(url.isNotEmpty ? url : 'assets/profile.jpg');
   }
 
   @override
@@ -36,8 +27,6 @@ class AppDrawer extends StatelessWidget {
       child: SafeArea(
         child: Column(
           children: [
-            // Expanded memastikan menu dapat di-scroll jika layar kecil,
-            // dan sekaligus mendorong tombol Keluar ke bagian paling bawah.
             Expanded(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
@@ -45,40 +34,71 @@ class AppDrawer extends StatelessWidget {
                   children: [
                     const SizedBox(height: 20),
                     // HEADER PROFIL (Dapat diklik untuk menuju Profil / About Me)
-                    InkWell(
-                      onTap: () {
-                        Navigator.pop(context); // Tutup drawer
-                        globalNavIndex.value = 3; // Pindah ke Tab Profil (About Me)
+                    ValueListenableBuilder<UserProfileData>(
+                      valueListenable: SharedData.userProfileNotifier,
+                      builder: (context, userProfile, _) {
+                        final String displayUsername = userProfile.username.contains(RegExp(r'^[0-9]+$'))
+                            ? 'NIM : ${userProfile.username}'
+                            : (userProfile.username.startsWith('@')
+                                ? userProfile.username
+                                : '@${userProfile.username}');
+
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () {
+                              context.pop(); // Tutup drawer
+                              context.push('/settings/edit-profile');
+                            },
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: Stack(
+                                children: [
+                                  Center(
+                                    child: Column(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 40,
+                                          backgroundImage: _resolveAvatarImage(userProfile.avatarUrl),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          userProfile.fullName,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: textColor,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          displayUsername,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: subTextColor,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 4,
+                                    right: 4,
+                                    child: Icon(
+                                      Icons.chevron_right,
+                                      size: 20,
+                                      color: subTextColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
                       },
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Column(
-                          children: [
-                            const CircleAvatar(
-                              radius: 40,
-                              backgroundImage: AssetImage('assets/profile.jpg'),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Muhammad Nur Ilham',
-                              style: TextStyle(
-                                color: textColor,
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'NIM : 25051204433',
-                              style: TextStyle(
-                                color: subTextColor,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                     ),
                     const SizedBox(height: 16),
 
@@ -87,26 +107,7 @@ class AppDrawer extends StatelessWidget {
 
                     const SizedBox(height: 8),
 
-                    // 1. Edit Profil (Ikon: Icons.edit_outlined)
-                    ListTile(
-                      leading: Icon(Icons.edit_outlined, color: textColor),
-                      title: Text(
-                        'Edit Profil',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          CupertinoPageRoute(builder: (context) => const EditProfilePage()),
-                        );
-                      },
-                    ),
-
-                    // 2. Mode Gelap (Ikon: Icons.dark_mode_outlined, dengan switch toggle)
+                    // 1. Mode Gelap (Ikon: Icons.dark_mode_outlined, dengan switch toggle)
                     ListTile(
                       leading: Icon(Icons.dark_mode_outlined, color: textColor),
                       title: Text(
@@ -127,7 +128,7 @@ class AppDrawer extends StatelessWidget {
                       ),
                     ),
 
-                    // 3. Jadwal Tayang (Ikon: Icons.calendar_month_outlined)
+                    // 2. Jadwal Tayang (Ikon: Icons.calendar_month_outlined)
                     ListTile(
                       leading: Icon(Icons.calendar_month_outlined, color: textColor),
                       title: Text(
@@ -138,24 +139,12 @@ class AppDrawer extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      onTap: () => _showComingSoonSnackBar(context, 'Jadwal Tayang'),
+                      onTap: () {
+                        context.push('/schedule');
+                      },
                     ),
 
-                    // 4. Favorit (Ikon: Icons.star_border_rounded)
-                    ListTile(
-                      leading: Icon(Icons.star_border_rounded, color: textColor),
-                      title: Text(
-                        'Favorit',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      onTap: () => _showComingSoonSnackBar(context, 'Favorit'),
-                    ),
-
-                    // 5. Teman (Ikon: Icons.people_alt_outlined)
+                    // 3. Teman (Ikon: Icons.people_alt_outlined)
                     ListTile(
                       leading: Icon(Icons.people_alt_outlined, color: textColor),
                       title: Text(
@@ -167,17 +156,14 @@ class AppDrawer extends StatelessWidget {
                         ),
                       ),
                       onTap: () {
-                        Navigator.push(
-                          context,
-                          CupertinoPageRoute(builder: (context) => const FriendsPage()),
-                        );
+                        context.push('/friends');
                       },
                     ),
 
                     // PEMISAH TENGAH
                     const Divider(color: Colors.white24),
 
-                    // 5. Pengaturan (Ikon: Icons.settings_outlined)
+                    // 4. Pengaturan (Ikon: Icons.settings_outlined)
                     ListTile(
                       leading: Icon(Icons.settings_outlined, color: textColor),
                       title: Text(
@@ -189,14 +175,11 @@ class AppDrawer extends StatelessWidget {
                         ),
                       ),
                       onTap: () {
-                        Navigator.push(
-                          context,
-                          CupertinoPageRoute(builder: (context) => const SettingsPage()),
-                        );
+                        context.push('/settings');
                       },
                     ),
 
-                    // 6. Customer Service (Ikon: Icons.support_agent)
+                    // 5. Customer Service (Ikon: Icons.support_agent)
                     ListTile(
                       leading: Icon(Icons.support_agent, color: textColor),
                       title: Text(
@@ -208,14 +191,11 @@ class AppDrawer extends StatelessWidget {
                         ),
                       ),
                       onTap: () {
-                        Navigator.push(
-                          context,
-                          CupertinoPageRoute(builder: (context) => const CustomerServicePage()),
-                        );
+                        context.push('/customer-service');
                       },
                     ),
 
-                    // 7. Tentang (Ikon: Icons.info_outline)
+                    // 6. Tentang (Ikon: Icons.info_outline)
                     ListTile(
                       leading: Icon(Icons.info_outline, color: textColor),
                       title: Text(
@@ -226,35 +206,15 @@ class AppDrawer extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      onTap: () => _showComingSoonSnackBar(context, 'Tentang'),
+                      onTap: () {
+                        context.push('/about');
+                      },
                     ),
+                    const SizedBox(height: 16),
                   ],
                 ),
               ),
             ),
-
-            // GARIS PEMISAH SEBELUM KELUAR
-            const Divider(color: Colors.white24, thickness: 1, height: 1),
-
-            // Keluar (Ikon: Icons.logout, teks dan ikon warna merah)
-            ListTile(
-              leading: const Icon(Icons.logout, color: Colors.redAccent),
-              title: const Text(
-                'Keluar',
-                style: TextStyle(
-                  color: Colors.redAccent,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              onTap: () {
-                Navigator.pushReplacement(
-                  context,
-                  CupertinoPageRoute(builder: (context) => const LoginPage()),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
           ],
         ),
       ),

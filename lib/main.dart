@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
-import 'screens/login_page.dart'; 
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'routes/app_router.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: 'https://bnmdftynympgszsrwvdh.supabase.co',
+    anonKey: 'sb_publishable_Um1Q9CBhWS8ikSvA4e8-zg_4vjc2LAF',
+  );
+
   runApp(const MyApp());
 }
 
@@ -15,7 +23,7 @@ class MyApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeNotifier,
       builder: (_, ThemeMode currentMode, _) {
-        return MaterialApp(
+        return MaterialApp.router(
           debugShowCheckedModeBanner: false,
           title: 'MyWatchList',
           
@@ -54,7 +62,7 @@ class MyApp extends StatelessWidget {
           ),
           
           themeMode: currentMode,
-          home: const LoginPage(), // Langsung memuat halaman login
+          routerConfig: appRouter,
         );
       },
     );

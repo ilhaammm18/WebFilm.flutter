@@ -1,16 +1,359 @@
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../routes/app_router.dart';
 import '../widgets/app_drawer.dart';
-import 'customer_service_page.dart';
-import 'edit_profile_page.dart';
 import '../models/drama.dart';
 import '../data/shared_data.dart';
-import 'detail_page.dart';
+import '../services/api_service.dart';
 import 'main_navigation.dart';
-import 'settings_page.dart';
 
-class ProfileTab extends StatelessWidget {
-  const ProfileTab({super.key});
+class ProfileTab extends StatefulWidget {
+  final ApiService? apiService;
+  const ProfileTab({super.key, this.apiService});
+
+  @visibleForTesting
+  static void clearCaches() {
+    _ProfileTabState.clearCaches();
+  }
+
+  // Halaman Edit Profil
+  static void showEditProfileDialog(BuildContext context) {
+    context.push('/settings/edit-profile');
+  }
+
+  // Halaman Customer Service
+  static void showCustomerServiceModal(BuildContext context) {
+    context.push('/customer-service');
+  }
+
+  // Halaman Pengaturan
+  static void showSettingsModal(BuildContext context) {
+    context.push('/settings');
+  }
+
+  @override
+  State<ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<ProfileTab> {
+  late final ApiService _apiService;
+  String _fullName = 'Muhammad Nur Ilham';
+  String _username = '25051204433';
+  String _bio =
+      'Selamat Datang di MyWatchList! Halo! Saya Muhammad Nur Ilham. Saat ini saya adalah mahasiswa Teknik Informatika Universitas Negeri Surabaya (Unesa) semester 3. Web ini dibuat untuk memenuhi tugas mata kuliah Pemrograman Berbasis Platform (PBP).';
+  String _avatarUrl = 'assets/profile.jpg';
+  int _followersCount = 0;
+  int _followingCount = 0;
+
+  static final Map<int, String> _posterCache = {};
+  static final Map<int, String> _genreCache = {};
+  static final Map<int, int> _episodesCache = {};
+  static final Set<int> _pendingTmdbFetches = {};
+  static final Set<int> _enrichedIds = {};
+
+  @visibleForTesting
+  static void clearCaches() {
+    _posterCache.clear();
+    _genreCache.clear();
+    _episodesCache.clear();
+    _pendingTmdbFetches.clear();
+    _enrichedIds.clear();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _apiService = widget.apiService ?? ApiService();
+    SharedData.userProfileNotifier.addListener(_syncUserProfile);
+    _syncUserProfile();
+    SharedData.dramaListNotifier.addListener(_onDramaListChanged);
+    _onDramaListChanged();
+    _fetchProfileData();
+  }
+
+  @override
+  void dispose() {
+    SharedData.userProfileNotifier.removeListener(_syncUserProfile);
+    SharedData.dramaListNotifier.removeListener(_onDramaListChanged);
+    super.dispose();
+  }
+
+  void _onDramaListChanged() {
+    final list = SharedData.dramaListNotifier.value;
+    if (list.isNotEmpty) {
+      final needsEnrich = list.any((d) =>
+          d.id > 0 &&
+          (d.image.isEmpty || d.genre == 'General' || d.genre.isEmpty) &&
+          !_pendingTmdbFetches.contains(d.id) &&
+          !_enrichedIds.contains(d.id));
+      if (needsEnrich) {
+        _enrichDramasWithTmdb(list);
+      }
+    }
+  }
+
+  Future<void> _enrichDramasWithTmdb(List<Drama> list) async {
+    final itemsToEnrich = list
+        .where((d) =>
+            d.id > 0 &&
+            (d.image.isEmpty || d.genre == 'General' || d.genre.isEmpty) &&
+            !_pendingTmdbFetches.contains(d.id) &&
+            !_enrichedIds.contains(d.id))
+        .toList();
+
+    if (itemsToEnrich.isEmpty) return;
+
+    for (final item in itemsToEnrich) {
+      _pendingTmdbFetches.add(item.id);
+    }
+
+    bool updated = false;
+    await Future.wait(
+      itemsToEnrich.map((drama) async {
+        try {
+          final detail = await _apiService.getMovieDetails(
+            drama.id,
+            mediaType: drama.mediaType.isNotEmpty ? drama.mediaType : null,
+          );
+
+          // 1. Gambar poster dari TMDB
+          if (detail.image.isNotEmpty) {
+            _posterCache[drama.id] = detail.image;
+            drama.image = detail.image;
+            updated = true;
+          }
+          if (detail.backdrop.isNotEmpty && drama.backdrop.isEmpty) {
+            drama.backdrop = detail.backdrop;
+          }
+
+          // 2. Genre asli atau tipe tayangan (Film/Serial TV) dari TMDB
+          String detectedGenre = detail.genre;
+          if (detectedGenre.isEmpty || detectedGenre == 'General') {
+            if (detail.genresList.isNotEmpty &&
+                detail.genresList.first != 'General' &&
+                detail.genresList.first.isNotEmpty) {
+              detectedGenre = detail.genresList.first;
+            } else {
+              detectedGenre = detail.mediaType == 'tv' ? 'Serial TV' : 'Film';
+            }
+          }
+          _genreCache[drama.id] = detectedGenre;
+          drama.genre = detectedGenre;
+          updated = true;
+
+          // 3. Metadata pendukung (media type, episode, genreIds, dsb.)
+          if (detail.mediaType.isNotEmpty) {
+            drama.mediaType = detail.mediaType;
+          }
+          if (detail.episodes > 0 && drama.episodes == 0) {
+            _episodesCache[drama.id] = detail.episodes;
+            drama.episodes = detail.episodes;
+            updated = true;
+          }
+          if (detail.originalLanguage.isNotEmpty && drama.originalLanguage.isEmpty) {
+            drama.originalLanguage = detail.originalLanguage;
+          }
+          if (detail.genresList.isNotEmpty) {
+            drama.genresList = detail.genresList;
+          }
+          if (detail.genreIds.isNotEmpty && drama.genreIds.isEmpty) {
+            drama.genreIds = detail.genreIds;
+          }
+
+          _enrichedIds.add(drama.id);
+        } catch (e) {
+          debugPrint('Error enrich TMDB drama ${drama.id}: $e');
+        } finally {
+          _pendingTmdbFetches.remove(drama.id);
+        }
+      }),
+    );
+
+    if (updated && mounted) {
+      SharedData.dramaListNotifier.value = List<Drama>.from(list);
+      SharedData.dramaListNotifier.notifyListeners();
+      setState(() {});
+    }
+  }
+
+  void _syncUserProfile() {
+    final p = SharedData.userProfileNotifier.value;
+    if (mounted) {
+      setState(() {
+        _fullName = p.fullName;
+        _username = p.username;
+        _bio = p.bio;
+        _avatarUrl = p.avatarUrl;
+      });
+    }
+  }
+
+  SupabaseClient? get _supabaseClient {
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _fetchProfileData() async {
+    final client = _supabaseClient;
+    if (client == null) return;
+    try {
+      final user = client.auth.currentUser;
+      final userId = user?.id;
+
+      // 1. Baca metadata profil pengguna dari Supabase Auth
+      if (user != null) {
+        final metadata = user.userMetadata ?? {};
+        if (metadata['full_name'] != null &&
+            (metadata['full_name'] as String).trim().isNotEmpty) {
+          _fullName = (metadata['full_name'] as String).trim();
+        }
+        if (metadata['username'] != null &&
+            (metadata['username'] as String).trim().isNotEmpty) {
+          _username = (metadata['username'] as String).trim();
+        }
+        if (metadata['bio'] != null &&
+            (metadata['bio'] as String).trim().isNotEmpty) {
+          _bio = (metadata['bio'] as String).trim();
+        }
+        if (metadata['avatar_url'] != null &&
+            (metadata['avatar_url'] as String).trim().isNotEmpty) {
+          _avatarUrl = (metadata['avatar_url'] as String).trim();
+        }
+      }
+
+      // 2. Baca dari tabel profiles jika tersedia di database Supabase
+      if (userId != null) {
+        try {
+          final profileData = await client
+              .from('profiles')
+              .select()
+              .eq('id', userId)
+              .maybeSingle();
+          if (profileData != null) {
+            if (profileData['full_name'] != null &&
+                (profileData['full_name'] as String).trim().isNotEmpty) {
+              _fullName = (profileData['full_name'] as String).trim();
+            }
+            if (profileData['username'] != null &&
+                (profileData['username'] as String).trim().isNotEmpty) {
+              _username = (profileData['username'] as String).trim();
+            }
+            if (profileData['bio'] != null &&
+                (profileData['bio'] as String).trim().isNotEmpty) {
+              _bio = (profileData['bio'] as String).trim();
+            }
+            if (profileData['avatar_url'] != null &&
+                (profileData['avatar_url'] as String).trim().isNotEmpty) {
+              _avatarUrl = (profileData['avatar_url'] as String).trim();
+            }
+          } else {
+            // Auto sinkronkan akun lama ke tabel profiles
+            try {
+              await client.from('profiles').upsert({
+                'id': userId,
+                'username': _username.toLowerCase(),
+                'full_name': _fullName,
+                'bio': _bio,
+                'avatar_url': _avatarUrl,
+              });
+            } catch (_) {}
+          }
+        } catch (_) {}
+
+        // 3. Fetch Real Pengikut & Mengikuti dari tabel public.follows
+        try {
+          final followersRes = await client
+              .from('follows')
+              .select('follower_id')
+              .eq('following_id', userId);
+          _followersCount = (followersRes as List).length;
+
+          final followingRes = await client
+              .from('follows')
+              .select('following_id')
+              .eq('follower_id', userId);
+          _followingCount = (followingRes as List).length;
+        } catch (_) {}
+      }
+
+      SharedData.userProfileNotifier.value = UserProfileData(
+        fullName: _fullName,
+        username: _username,
+        bio: _bio,
+        avatarUrl: _avatarUrl,
+      );
+
+      if (mounted) {
+        setState(() {});
+      }
+
+      // 4. Filter Data Berdasarkan User Login (Watchlist)
+      if (userId != null) {
+        final List<dynamic> data = await client
+            .from('watchlists')
+            .select()
+            .eq('user_id', userId);
+
+        final List<Drama> list = data
+            .map((item) => Drama.fromSupabase(item as Map<String, dynamic>))
+            .toList();
+
+        // Pulihkan dari cache lokal jika sudah pernah di-fetch sebelumnya
+        for (final drama in list) {
+          if (drama.id > 0) {
+            if (drama.image.isEmpty && _posterCache.containsKey(drama.id)) {
+              drama.image = _posterCache[drama.id]!;
+            }
+            if ((drama.genre == 'General' || drama.genre.isEmpty) &&
+                _genreCache.containsKey(drama.id)) {
+              drama.genre = _genreCache[drama.id]!;
+            }
+            if (drama.episodes == 0 && _episodesCache.containsKey(drama.id)) {
+              drama.episodes = _episodesCache[drama.id]!;
+            }
+          }
+        }
+
+        SharedData.dramaListNotifier.value = list;
+
+        // Background fetch TMDB berdasarkan tmdb_id
+        _enrichDramasWithTmdb(list);
+
+        // 5. Fetch Riwayat Pembaruan filter by user_id (dinonaktifkan / tidak digunakan lagi di web)
+        /*
+        await client
+            .from('riwayat')
+            .select()
+            .eq('user_id', userId)
+            .order('created_at', ascending: false);
+        */
+      } else {
+        SharedData.dramaListNotifier.value = [];
+      }
+    } catch (e) {
+      debugPrint('Error fetching profile data: $e');
+    }
+  }
+
+  Widget _buildProfileAvatar() {
+    ImageProvider imageProvider;
+    if (_avatarUrl.startsWith('http')) {
+      imageProvider = NetworkImage(_avatarUrl);
+    } else {
+      imageProvider = AssetImage(
+        _avatarUrl.isNotEmpty ? _avatarUrl : 'assets/profile.jpg',
+      );
+    }
+
+    return CircleAvatar(
+      radius: 48,
+      backgroundColor: const Color(0xFF262A36),
+      backgroundImage: imageProvider,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,43 +392,25 @@ class ProfileTab extends StatelessWidget {
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
+      body: RefreshIndicator(
+        onRefresh: _fetchProfileData,
+        color: primaryBlue,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
 
-            // ==========================================
-            // 1. HEADER PROFIL
-            // ==========================================
+              // ==========================================
+              // 1. HEADER PROFIL
+              // ==========================================
             // Foto Profil Melingkar
-            Container(
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: primaryBlue.withValues(alpha: 0.5),
-                  width: 2.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: primaryBlue.withValues(alpha: 0.2),
-                    blurRadius: 14,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: const CircleAvatar(
-                radius: 48,
-                backgroundColor: Color(0xFF262A36),
-                backgroundImage: AssetImage('assets/profile.jpg'),
-              ),
-            ),
+            _buildProfileAvatar(),
             const SizedBox(height: 14),
 
             // Nama Lengkap
             Text(
-              'Muhammad Nur Ilham',
+              _fullName,
               style: TextStyle(
                 color: textColor,
                 fontSize: 22,
@@ -95,36 +420,17 @@ class ProfileTab extends StatelessWidget {
             ),
             const SizedBox(height: 8),
 
-            // Username / Badge NIM (Pill Badge Melengkung Elegan)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1B2335) : const Color(0xFFE8F1FC),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: primaryBlue.withValues(alpha: 0.4),
-                  width: 1.2,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.badge_outlined,
-                    size: 14,
-                    color: isDark ? const Color(0xFF70B6FF) : primaryBlue,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'NIM : 25051204433',
-                    style: TextStyle(
-                      color: isDark ? const Color(0xFF70B6FF) : primaryBlue,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                ],
+            // Username / NIM
+            Text(
+              _username.startsWith('@')
+                  ? _username
+                  : (_username.contains(RegExp(r'^[0-9]+$'))
+                      ? 'NIM : $_username'
+                      : '@$_username'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                fontSize: 14,
               ),
             ),
 
@@ -151,7 +457,17 @@ class ProfileTab extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: _buildFollowStatItem('0', 'Pengikut', textColor, subTextColor),
+                    child: InkWell(
+                      onTap: () {
+                        context.push('/friends').then((_) => _fetchProfileData());
+                      },
+                      child: _buildFollowStatItem(
+                        _followersCount.toString(),
+                        'Pengikut',
+                        textColor,
+                        subTextColor,
+                      ),
+                    ),
                   ),
                   Container(
                     height: 28,
@@ -159,7 +475,17 @@ class ProfileTab extends StatelessWidget {
                     color: isDark ? Colors.white.withValues(alpha: 0.1) : Colors.grey.shade300,
                   ),
                   Expanded(
-                    child: _buildFollowStatItem('0', 'Mengikuti', textColor, subTextColor),
+                    child: InkWell(
+                      onTap: () {
+                        context.push('/friends').then((_) => _fetchProfileData());
+                      },
+                      child: _buildFollowStatItem(
+                        _followingCount.toString(),
+                        'Mengikuti',
+                        textColor,
+                        subTextColor,
+                      ),
+                    ),
                   ),
                   Container(
                     height: 28,
@@ -214,7 +540,7 @@ class ProfileTab extends StatelessWidget {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          'Tentang Saya (About Me)',
+                          'Tentang Saya',
                           style: TextStyle(
                             color: textColor,
                             fontSize: 15,
@@ -226,7 +552,7 @@ class ProfileTab extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Selamat Datang di MyWatchList! Halo! Saya Muhammad Nur Ilham. Saat ini saya adalah mahasiswa Teknik Informatika Universitas Negeri Surabaya (Unesa) semester 3. Web ini dibuat untuk memenuhi tugas mata kuliah Pemrograman Berbasis Platform (PBP).',
+                      _bio,
                       style: TextStyle(
                         color: isDark ? const Color(0xFFC7CBD8) : const Color(0xFF4A4E5A),
                         fontSize: 13.5,
@@ -247,78 +573,63 @@ class ProfileTab extends StatelessWidget {
             ValueListenableBuilder<List<Drama>>(
               valueListenable: SharedData.dramaListNotifier,
               builder: (context, dramaList, _) {
-                // DRAMA stats
-                List<Drama> dramasOnly = dramaList
-                    .where((d) =>
-                        !d.genre.contains('Film') &&
-                        !d.genre.contains('Animasi') &&
-                        !d.genre.contains('Anime') &&
-                        d.episodes > 1)
-                    .toList();
-                int watchedDramaEpisodes =
-                    dramasOnly.fold(0, (sum, d) => sum + d.watchedEpisodes);
-                int watchedDramaCount = dramasOnly
-                    .where((d) => d.watchedEpisodes > 0 || d.status == 'Selesai')
-                    .length;
+                int jumlahFilm = 0;
+                int totalFilmMinutes = 0;
 
-                // Hitung total dengan fallback angka default yang realistis sesuai permintaan
-                int displayDramaEps =
-                    watchedDramaEpisodes > 0 ? watchedDramaEpisodes : 74;
-                int displayDramaCount =
-                    watchedDramaCount > 0 ? watchedDramaCount : 20;
-                int totalDramaMinutes = displayDramaEps * 60; // 74 * 60 = 4440m -> 3d 2h 0m
+                int jumlahDrama = 0;
+                int totalEpisodeDrama = 0;
+                int totalDramaMinutes = 0;
 
-                // FILM stats
-                List<Drama> filmsOnly = dramaList
-                    .where((d) =>
-                        (d.genre.contains('Film') || d.episodes == 1) &&
-                        !d.genre.contains('Animasi') &&
-                        !d.genre.contains('Anime'))
-                    .toList();
-                int watchedFilmCount = filmsOnly
-                    .where((d) => d.status == 'Selesai' || d.watchedEpisodes > 0)
-                    .length;
-                int displayFilmCount =
-                    watchedFilmCount > 0 ? watchedFilmCount : 25;
-                // 520m -> 8h 40m
-                int totalFilmMinutes =
-                    watchedFilmCount > 0 ? (watchedFilmCount * 115) : 520;
+                int jumlahAnimasi = 0;
+                int totalEpisodeAnimasi = 0;
+                int totalAnimMinutes = 0;
 
-                // ANIMASI stats
-                List<Drama> animOnly = dramaList
-                    .where((d) =>
-                        d.genre.contains('Animasi') ||
-                        d.genre.contains('Anime'))
-                    .toList();
-                int watchedAnimEpisodes =
-                    animOnly.fold(0, (sum, d) => sum + d.watchedEpisodes);
-                int watchedAnimCount = animOnly
-                    .where((d) => d.watchedEpisodes > 0 || d.status == 'Selesai')
-                    .length;
-                int displayAnimEps =
-                    watchedAnimEpisodes > 0 ? watchedAnimEpisodes : 45;
-                int displayAnimCount =
-                    watchedAnimCount > 0 ? watchedAnimCount : 3;
-                // 3150m -> 2d 4h 30m
-                int totalAnimMinutes =
-                    watchedAnimEpisodes > 0 ? (watchedAnimEpisodes * 70) : 3150;
+                for (final d in dramaList) {
+                  // Hanya hitung item yang statusnya sudah ditonton: 'Selesai' atau 'Sedang Menonton'
+                  // (Abaikan 'Rencana Ditonton' atau 'Belum Ditonton')
+                  final status = d.status.trim();
+                  if (status != 'Selesai' && status != 'Sedang Menonton') {
+                    continue;
+                  }
 
-                // TOTAL KESELURUHAN stats
-                int totalAllMinutes;
-                String displayTotalCount;
-                if (watchedDramaEpisodes > 0 ||
-                    watchedFilmCount > 0 ||
-                    watchedAnimEpisodes > 0) {
-                  totalAllMinutes =
-                      totalDramaMinutes + totalFilmMinutes + totalAnimMinutes;
-                  int totalWatchCount =
-                      displayDramaCount + displayFilmCount + displayAnimCount;
-                  displayTotalCount = '$totalWatchCount tontonan';
-                } else {
-                  // Fallback dummy realistis: '10d 13h 25m', '234 tontonan'
-                  totalAllMinutes = 15205; // 10d 13h 25m
-                  displayTotalCount = '234 tontonan';
+                  if (_isAnimation(d)) {
+                    // Kartu ANIMASI: status 'Sedang Menonton' atau 'Selesai'
+                    jumlahAnimasi++;
+                    int eps = d.watchedEpisodes;
+                    if (eps == 0 && status == 'Selesai') {
+                      eps = d.episodes > 0 ? d.episodes : 1;
+                    }
+                    if (_isMovie(d) && eps == 0) {
+                      eps = 1;
+                    }
+                    totalEpisodeAnimasi += eps;
+                    final epDur = _getEpisodeDuration(d, 24);
+                    totalAnimMinutes += eps * epDur;
+                  } else if (_isMovie(d)) {
+                    // Kartu FILM: Item bertipe movie (non-animasi) yang berstatus 'Selesai'
+                    if (status == 'Selesai') {
+                      jumlahFilm++;
+                      final movieDur = _getEpisodeDuration(d, 120);
+                      totalFilmMinutes += movieDur;
+                    }
+                  } else {
+                    // Kartu DRAMA: Item bertipe tv (non-animasi) yang berstatus 'Sedang Menonton' atau 'Selesai'
+                    jumlahDrama++;
+                    int eps = d.watchedEpisodes;
+                    if (eps == 0 && status == 'Selesai') {
+                      eps = d.episodes > 0 ? d.episodes : 1;
+                    }
+                    totalEpisodeDrama += eps;
+                    final epDur = _getEpisodeDuration(d, 50);
+                    totalDramaMinutes += eps * epDur;
+                  }
                 }
+
+                // TOTAL KESELURUHAN: Jumlahkan seluruh menit dan total judul
+                final int totalAllMinutes =
+                    totalDramaMinutes + totalFilmMinutes + totalAnimMinutes;
+                final int totalTontonan =
+                    jumlahDrama + jumlahFilm + jumlahAnimasi;
 
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -337,7 +648,7 @@ class ProfileTab extends StatelessWidget {
                               icon: Icons.tv_rounded,
                               durationText: _formatDuration(totalDramaMinutes),
                               subInfo:
-                                  '$displayDramaEps episode, $displayDramaCount drama',
+                                  '$totalEpisodeDrama episode, $jumlahDrama drama',
                               cardBg: cardBg,
                               borderColor: borderColor,
                               isDark: isDark,
@@ -355,7 +666,7 @@ class ProfileTab extends StatelessWidget {
                                   : const Color(0xFF7A33E2),
                               icon: Icons.movie_creation_outlined,
                               durationText: _formatDuration(totalFilmMinutes),
-                              subInfo: '$displayFilmCount film',
+                              subInfo: '$jumlahFilm film',
                               cardBg: cardBg,
                               borderColor: borderColor,
                               isDark: isDark,
@@ -379,7 +690,7 @@ class ProfileTab extends StatelessWidget {
                               icon: Icons.animation,
                               durationText: _formatDuration(totalAnimMinutes),
                               subInfo:
-                                  '$displayAnimEps episode, $displayAnimCount animasi',
+                                  '$totalEpisodeAnimasi episode, $jumlahAnimasi animasi',
                               cardBg: cardBg,
                               borderColor: borderColor,
                               isDark: isDark,
@@ -397,7 +708,7 @@ class ProfileTab extends StatelessWidget {
                                   : const Color(0xFF059669),
                               icon: Icons.stacked_line_chart,
                               durationText: _formatDuration(totalAllMinutes),
-                              subInfo: displayTotalCount,
+                              subInfo: '$totalTontonan tontonan',
                               cardBg: cardBg,
                               borderColor: borderColor,
                               isDark: isDark,
@@ -477,29 +788,71 @@ class ProfileTab extends StatelessWidget {
                       ),
                     ),
 
-                    // Horizontal List Card Drama
-                    SizedBox(
-                      height: 220,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        scrollDirection: Axis.horizontal,
-                        physics: const BouncingScrollPhysics(),
-                        itemCount: recentDramas.length,
-                        separatorBuilder: (_, _) => const SizedBox(width: 12),
-                        itemBuilder: (context, index) {
-                          final drama = recentDramas[index];
-                          return _buildRecentDramaCard(
-                            context,
-                            drama,
-                            isDark,
-                            cardBg,
-                            textColor,
-                            subTextColor,
-                            primaryBlue,
-                          );
-                        },
+                    // Horizontal List Card Drama atau Empty State Riwayat
+                    if (recentDramas.isEmpty)
+                      Container(
+                        height: 130,
+                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: cardBg,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: borderColor),
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.history,
+                                size: 36,
+                                color: subTextColor,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Belum ada riwayat pembaruan',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Aktivitas tontonan film atau dramamu akan muncul di sini',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: subTextColor,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    else
+                      SizedBox(
+                        height: 220,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: recentDramas.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 12),
+                          itemBuilder: (context, index) {
+                            final drama = recentDramas[index];
+                            return _buildRecentDramaCard(
+                              context,
+                              drama,
+                              isDark,
+                              cardBg,
+                              textColor,
+                              subTextColor,
+                              primaryBlue,
+                            );
+                          },
+                        ),
                       ),
-                    ),
                   ],
                 );
               },
@@ -509,8 +862,9 @@ class ProfileTab extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   // ==========================================
   // HELPER WIDGETS & METHODS
@@ -652,13 +1006,64 @@ class ProfileTab extends StatelessWidget {
     bool isCompleted = drama.status == 'Selesai';
     Color statusColor = isCompleted ? const Color(0xFF10B981) : primaryBlue;
 
+    final String posterUrl = drama.image.isNotEmpty
+        ? drama.image
+        : (_posterCache[drama.id] ?? '');
+
+    String displayGenre = drama.genre;
+    if (displayGenre.isEmpty || displayGenre == 'General') {
+      if (_genreCache.containsKey(drama.id) &&
+          _genreCache[drama.id] != 'General') {
+        displayGenre = _genreCache[drama.id]!;
+      } else {
+        displayGenre = (drama.mediaType == 'tv' || drama.episodes > 1)
+            ? 'Serial TV'
+            : 'Film';
+      }
+    }
+
+    Widget posterWidget;
+    if (posterUrl.isNotEmpty) {
+      posterWidget = Image.network(
+        posterUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => Container(
+          color: isDark ? const Color(0xFF282C37) : Colors.grey.shade300,
+          child: Icon(Icons.movie, color: subTextColor, size: 30),
+        ),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return Container(
+            color: isDark ? const Color(0xFF282C37) : Colors.grey.shade200,
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: primaryBlue,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } else {
+      posterWidget = Container(
+        color: isDark ? const Color(0xFF282C37) : Colors.grey.shade300,
+        child: Icon(Icons.movie, color: subTextColor, size: 30),
+      );
+    }
+
     return GestureDetector(
       onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DetailPage(drama: drama),
-          ),
+        context.push(
+          '/movie/${drama.id}',
+          extra: {
+            'drama': drama,
+            'apiService': _apiService,
+            'posterUrl': posterUrl,
+          },
         );
       },
       child: Container(
@@ -687,30 +1092,7 @@ class ProfileTab extends StatelessWidget {
                   child: SizedBox(
                     height: 140,
                     width: 120,
-                    child: Image.network(
-                      drama.image,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: isDark ? const Color(0xFF282C37) : Colors.grey.shade300,
-                        child: Icon(Icons.movie, color: subTextColor, size: 30),
-                      ),
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                          color: isDark ? const Color(0xFF282C37) : Colors.grey.shade200,
-                          child: Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: primaryBlue,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                    child: posterWidget,
                   ),
                 ),
 
@@ -785,13 +1167,7 @@ class ProfileTab extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    (drama.mediaType == 'movie' ||
-                            drama.isMovie ||
-                            drama.genre.toLowerCase().contains('film'))
-                        ? drama.genre
-                        : (drama.episodes > 1
-                            ? '${drama.watchedEpisodes}/${drama.episodes} Eps'
-                            : drama.genre),
+                    displayGenre,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -808,6 +1184,53 @@ class ProfileTab extends StatelessWidget {
     );
   }
 
+  // Helper identifikasi kategori & durasi tontonan dari TMDB / Supabase
+  bool _isAnimation(Drama d) {
+    if (d.genreIds.contains(16)) return true;
+    final g = d.genre.toLowerCase();
+    if (g.contains('anim') || g.contains('anime')) return true;
+    for (final item in d.genresList) {
+      final s = item.toLowerCase();
+      if (s.contains('anim') || s.contains('anime')) return true;
+    }
+    for (final item in d.tagsList) {
+      final s = item.toLowerCase();
+      if (s.contains('anim') || s.contains('anime')) return true;
+    }
+    return false;
+  }
+
+  bool _isMovie(Drama d) {
+    if (d.mediaType == 'movie' || d.isMovie) return true;
+    final g = d.genre.toLowerCase();
+    if (g.contains('film') || g.contains('movie')) return true;
+    return d.episodes == 1;
+  }
+
+  int _getEpisodeDuration(Drama d, int defaultMinutes) {
+    if (d.runtime != null && d.runtime! > 0) {
+      return d.runtime!;
+    }
+    final durStr = d.duration.toLowerCase().trim();
+    if (durStr.isNotEmpty) {
+      final regexHM = RegExp(r'(\d+)\s*(?:j|h)\s*(?:(\d+)\s*m)?');
+      final matchHM = regexHM.firstMatch(durStr);
+      if (matchHM != null) {
+        final h = int.tryParse(matchHM.group(1) ?? '0') ?? 0;
+        final m = int.tryParse(matchHM.group(2) ?? '0') ?? 0;
+        final total = h * 60 + m;
+        if (total > 0) return total;
+      }
+      final regexM = RegExp(r'(\d+)\s*(?:menit|m)?');
+      final matchM = regexM.firstMatch(durStr);
+      if (matchM != null) {
+        final val = int.tryParse(matchM.group(1) ?? '');
+        if (val != null && val > 0) return val;
+      }
+    }
+    return defaultMinutes;
+  }
+
   // Fungsi pembantu untuk mengubah total menit menjadi format "3d 2h 0m" atau "8h 40m"
   String _formatDuration(int totalMinutes) {
     if (totalMinutes <= 0) return '0h 0m';
@@ -822,29 +1245,5 @@ class ProfileTab extends StatelessWidget {
     } else {
       return '${hours}h ${mins}m';
     }
-  }
-
-  // Halaman Edit Profil
-  static void showEditProfileDialog(BuildContext context) {
-    Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (context) => const EditProfilePage()),
-    );
-  }
-
-  // Halaman Customer Service
-  static void showCustomerServiceModal(BuildContext context) {
-    Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (context) => const CustomerServicePage()),
-    );
-  }
-
-  // Halaman Pengaturan
-  static void showSettingsModal(BuildContext context) {
-    Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (context) => const SettingsPage()),
-    );
   }
 }

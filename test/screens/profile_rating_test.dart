@@ -96,10 +96,11 @@ void main() {
     expect(find.text('ANIMASI'), findsOneWidget);
     expect(find.text('TOTAL KESELURUHAN'), findsOneWidget);
 
-    expect(find.text('2d 4h 30m'), findsOneWidget);
-    expect(find.text('10d 13h 25m'), findsOneWidget);
-    expect(find.text('45 episode, 3 animasi'), findsOneWidget);
-    expect(find.text('234 tontonan'), findsOneWidget);
+    expect(find.text('0h 0m'), findsNWidgets(4));
+    expect(find.text('0 episode, 0 drama'), findsOneWidget);
+    expect(find.text('0 film'), findsOneWidget);
+    expect(find.text('0 episode, 0 animasi'), findsOneWidget);
+    expect(find.text('0 tontonan'), findsOneWidget);
   });
 
 
@@ -194,7 +195,34 @@ void main() {
     expect(find.text('Profil'), findsOneWidget);
     expect(find.text('Muhammad Nur Ilham'), findsOneWidget);
     expect(find.text('NIM : 25051204433'), findsOneWidget);
-    expect(find.text('Tentang Saya (About Me)'), findsOneWidget);
+    expect(find.text('Tentang Saya'), findsOneWidget);
+  });
+
+  testWidgets('ProfileTab: Avatar polos tanpa border/glow dan NIM berupa Text abu-abu terpusat', (tester) async {
+    tester.view.physicalSize = const Size(1080, 1920);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ProfileTab(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Memastikan tidak ada icon badge di samping NIM
+    expect(find.byIcon(Icons.badge_outlined), findsNothing);
+
+    // Memastikan NIM dirender sebagai widget Text biasa yang terpusat
+    final nimFinder = find.text('NIM : 25051204433');
+    expect(nimFinder, findsOneWidget);
+
+    final Text nimWidget = tester.widget<Text>(nimFinder);
+    expect(nimWidget.textAlign, TextAlign.center);
+
+    // Memastikan CircleAvatar ada
+    expect(find.byType(CircleAvatar), findsOneWidget);
   });
 }
 

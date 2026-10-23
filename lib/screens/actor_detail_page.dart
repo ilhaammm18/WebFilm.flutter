@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import '../routes/app_router.dart';
 import '../models/actor.dart';
+import '../models/drama.dart';
 import '../services/api_service.dart';
 
 class ActorDetailPage extends StatefulWidget {
@@ -85,44 +87,117 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
     }
   }
 
-  String _calculateAge(String? bday) {
-    if (bday == null || bday.trim().isEmpty || bday == '-') return '-';
-    try {
-      DateTime birthDateTime;
-      if (RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(bday.trim())) {
-        birthDateTime = DateTime.parse(bday.trim());
-      } else {
-        const Map<String, int> monthMap = {
-          'januari': 1, 'februari': 2, 'maret': 3, 'april': 4,
-          'mei': 5, 'juni': 6, 'juli': 7, 'agustus': 8,
-          'september': 9, 'oktober': 10, 'november': 11, 'desember': 12,
-          'january': 1, 'february': 2, 'march': 3,
-          'may': 5, 'june': 6, 'july': 7, 'august': 8,
-          'october': 10, 'december': 12,
-        };
-        final parts = bday.trim().split(' ');
-        if (parts.length >= 3) {
-          final day = int.tryParse(parts[0]) ?? 1;
-          final month = monthMap[parts[1].toLowerCase()] ?? 1;
-          final year = int.tryParse(parts[2]) ?? 2000;
-          birthDateTime = DateTime(year, month, day);
-        } else {
-          birthDateTime = DateTime.parse(bday.trim());
-        }
-      }
-
-      final DateTime now = DateTime.now();
-      int age = now.year - birthDateTime.year;
-
-      if (now.month < birthDateTime.month ||
-          (now.month == birthDateTime.month && now.day < birthDateTime.day)) {
-        age--;
-      }
-
-      return age >= 0 ? '$age Tahun' : '-';
-    } catch (_) {
-      return '-';
+  DateTime? _parseDate(String? dateStr) {
+    if (dateStr == null || dateStr.trim().isEmpty || dateStr.trim() == '-') {
+      return null;
     }
+    final trimmed = dateStr.trim();
+    final parsed = DateTime.tryParse(trimmed);
+    if (parsed != null) return parsed;
+
+    const Map<String, int> monthMap = {
+      'jan': 1, 'januari': 1, 'january': 1,
+      'feb': 2, 'februari': 2, 'february': 2,
+      'mar': 3, 'maret': 3, 'march': 3,
+      'apr': 4, 'april': 4,
+      'mei': 5, 'may': 5,
+      'jun': 6, 'juni': 6, 'june': 6,
+      'jul': 7, 'juli': 7, 'july': 7,
+      'agu': 8, 'agust': 8, 'agustus': 8, 'aug': 8, 'august': 8,
+      'sep': 9, 'september': 9,
+      'okt': 10, 'oktober': 10, 'oct': 10, 'october': 10,
+      'nov': 11, 'november': 11,
+      'des': 12, 'desember': 12, 'dec': 12, 'december': 12,
+    };
+
+    final parts = trimmed.split(RegExp(r'\s+'));
+    if (parts.length >= 3) {
+      final day = int.tryParse(parts[0]);
+      final month = monthMap[parts[1].toLowerCase()];
+      final year = int.tryParse(parts[2]);
+      if (day != null && month != null && year != null) {
+        return DateTime(year, month, day);
+      }
+    }
+    return null;
+  }
+
+  String _formatDeathDate(DateTime date) {
+    const List<String> shortMonths = [
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des',
+    ];
+    return '${date.day} ${shortMonths[date.month]} ${date.year}';
+  }
+
+  int? _calculateAgeBetween(DateTime? birthDate, DateTime? endDate) {
+    if (birthDate == null || endDate == null) return null;
+    int age = endDate.year - birthDate.year;
+    if (endDate.month < birthDate.month ||
+        (endDate.month == birthDate.month && endDate.day < birthDate.day)) {
+      age--;
+    }
+    return age >= 0 ? age : null;
+  }
+
+  String _calculateAge(String? bday) {
+    final DateTime? birthDate = _parseDate(bday);
+    if (birthDate != null) {
+      final int? age = _calculateAgeBetween(birthDate, DateTime.now());
+      if (age != null) return '$age Tahun';
+    }
+    return '-';
+  }
+
+  String _getLifeStatusText(String? birthday, String? deathday) {
+    final DateTime? birthDate = _parseDate(birthday);
+    final DateTime? deathDate = _parseDate(deathday);
+
+    if (deathday != null && deathday.trim().isNotEmpty && deathday.trim() != '-') {
+      if (deathDate != null) {
+        final int? age = _calculateAgeBetween(birthDate, deathDate);
+        final String formattedDate = _formatDeathDate(deathDate);
+        if (age != null) {
+          return 'Wafat: $formattedDate (Usia $age)';
+        }
+        return 'Wafat: $formattedDate';
+      }
+      return 'Wafat: $deathday';
+    }
+
+    if (birthDate != null) {
+      final int? age = _calculateAgeBetween(birthDate, DateTime.now());
+      if (age != null) {
+        return 'Usia: $age Tahun';
+      }
+    }
+    return '';
+  }
+
+  String _getDeceasedBiodataValue(String? birthday, String? deathday) {
+    final DateTime? birthDate = _parseDate(birthday);
+    final DateTime? deathDate = _parseDate(deathday);
+
+    if (deathDate != null) {
+      final int? age = _calculateAgeBetween(birthDate, deathDate);
+      final String formattedDate = _formatDeathDate(deathDate);
+      if (age != null) {
+        return '$formattedDate (Usia $age)';
+      }
+      return formattedDate;
+    }
+    return deathday ?? '-';
   }
 
   @override
@@ -131,9 +206,9 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
 
     final Color bgColor = isDark ? const Color(0xFF14161D) : const Color(0xFFF8F9FA);
     final Color cardColor = isDark ? const Color(0xFF1C1F28) : Colors.white;
-    final Color textColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
-    final Color subTextColor = isDark ? const Color(0xFF9CA3AF) : Colors.grey.shade600;
-    final Color dividerColor = isDark ? const Color(0xFF262A36) : Colors.grey.shade200;
+    final Color textColor = isDark ? Colors.white : Colors.black87;
+    final Color subTextColor = isDark ? Colors.white70 : (Colors.grey[700] ?? Colors.grey.shade700);
+    final Color dividerColor = isDark ? Colors.white12 : (Colors.grey[300] ?? Colors.grey.shade300);
     final Color primaryBlue = const Color(0xFF0094FF);
 
     final Actor actor = _actor;
@@ -191,7 +266,11 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
                       child: ((widget.imageUrl == null ||
                                   widget.imageUrl!.isEmpty) &&
                               actor.imageUrl.isEmpty)
-                          ? Icon(Icons.person, size: 54, color: subTextColor)
+                          ? Icon(Icons.person,
+                              size: 54,
+                              color: isDark
+                                  ? Colors.white70
+                                  : (Colors.blueGrey[700] ?? Colors.black54))
                           : null,
                     ),
                   ),
@@ -220,6 +299,31 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
                       ),
                     ),
                   ],
+                  Builder(
+                    builder: (context) {
+                      final String lifeStatus = _getLifeStatusText(
+                        actor.birthday ?? (actor.birthDate != '-' ? actor.birthDate : null),
+                        actor.deathday,
+                      );
+                      if (lifeStatus.isEmpty) return const SizedBox.shrink();
+                      final bool isDeceased = actor.deathday != null &&
+                          actor.deathday!.trim().isNotEmpty &&
+                          actor.deathday != '-';
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          lifeStatus,
+                          style: TextStyle(
+                            color: isDeceased
+                                ? (isDark ? const Color(0xFF9CA3AF) : Colors.grey.shade600)
+                                : subTextColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
@@ -247,60 +351,70 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
               decoration: BoxDecoration(
                 color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: dividerColor),
+                border: Border.all(color: dividerColor, width: 1),
               ),
               child: Column(
                 children: [
                   // 1. Nama Asli
                   _buildBiodataRow(
+                    isDark,
                     Icons.person_outline,
                     'Nama Asli',
                     actor.name.isNotEmpty ? actor.name : '-',
-                    textColor,
-                    subTextColor,
                   ),
                   Divider(height: 1, thickness: 1, color: dividerColor, indent: 16, endIndent: 16),
 
                   // 2. Profesi
                   _buildBiodataRow(
+                    isDark,
                     Icons.work_outline,
                     'Profesi',
                     _formatDepartment(actor.knownForDepartment),
-                    textColor,
-                    subTextColor,
                   ),
                   Divider(height: 1, thickness: 1, color: dividerColor, indent: 16, endIndent: 16),
 
                   // 3. Tempat Lahir
                   _buildBiodataRow(
+                    isDark,
                     Icons.location_on_outlined,
                     'Tempat Lahir',
                     (actor.placeOfBirth != null && actor.placeOfBirth!.isNotEmpty)
                         ? actor.placeOfBirth!
                         : '-',
-                    textColor,
-                    subTextColor,
                   ),
                   Divider(height: 1, thickness: 1, color: dividerColor, indent: 16, endIndent: 16),
 
                   // 4. Tanggal Lahir
                   _buildBiodataRow(
+                    isDark,
                     Icons.cake_outlined,
                     'Tanggal Lahir',
                     _formatBirthday(actor.birthday ?? (actor.birthDate != '-' ? actor.birthDate : null)),
-                    textColor,
-                    subTextColor,
                   ),
                   Divider(height: 1, thickness: 1, color: dividerColor, indent: 16, endIndent: 16),
 
-                  // 5. Usia (Dihitung Otomatis)
-                  _buildBiodataRow(
-                    Icons.assignment_ind_outlined,
-                    'Usia',
-                    _calculateAge(actor.birthday ?? (actor.birthDate != '-' ? actor.birthDate : null)),
-                    textColor,
-                    subTextColor,
-                  ),
+                  // 5. Usia / Status Kehidupan
+                  if (actor.deathday != null &&
+                      actor.deathday!.trim().isNotEmpty &&
+                      actor.deathday != '-') ...[
+                    _buildBiodataRow(
+                      isDark,
+                      Icons.history_toggle_off_outlined,
+                      'Wafat',
+                      _getDeceasedBiodataValue(
+                        actor.birthday ?? (actor.birthDate != '-' ? actor.birthDate : null),
+                        actor.deathday,
+                      ),
+                      valueColor: isDark ? const Color(0xFF9CA3AF) : Colors.grey.shade600,
+                    ),
+                  ] else ...[
+                    _buildBiodataRow(
+                      isDark,
+                      Icons.assignment_ind_outlined,
+                      'Usia',
+                      _calculateAge(actor.birthday ?? (actor.birthDate != '-' ? actor.birthDate : null)),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -391,12 +505,12 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
   }
 
   Widget _buildBiodataRow(
+    bool isDark,
     IconData icon,
     String label,
-    String value,
-    Color textColor,
-    Color subTextColor,
-  ) {
+    String value, {
+    Color? valueColor,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -404,13 +518,17 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
           Icon(
             icon,
             size: 20,
-            color: Colors.grey[400] ?? subTextColor,
+            color: isDark
+                ? Colors.white70
+                : (Colors.blueGrey[700] ?? Colors.black54),
           ),
           const SizedBox(width: 12),
           Text(
             label,
             style: TextStyle(
-              color: Colors.grey[400] ?? subTextColor,
+              color: isDark
+                  ? Colors.white70
+                  : (Colors.grey[800] ?? Colors.black87),
               fontSize: 13.5,
               fontWeight: FontWeight.w500,
             ),
@@ -421,9 +539,9 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
               value.isNotEmpty ? value : '-',
               textAlign: TextAlign.end,
               style: TextStyle(
-                color: textColor,
+                color: valueColor ?? (isDark ? Colors.white : Colors.black87),
                 fontSize: 13.5,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w600,
               ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -443,98 +561,151 @@ class _ActorDetailPageState extends State<ActorDetailPage> {
     Color dividerColor,
     Color primaryBlue,
   ) {
+    final BorderRadius cardRadius = BorderRadius.circular(12);
+
     return Container(
       decoration: BoxDecoration(
         color: cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: dividerColor),
+        borderRadius: cardRadius,
+        border: Border.all(color: dividerColor, width: 1),
       ),
-      padding: const EdgeInsets.all(10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Poster film di kiri (kotak kecil memanjang ke bawah)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: SizedBox(
-              width: 55,
-              height: 80,
-              child: credit.posterUrl.isNotEmpty
-                  ? Image.network(
-                      credit.posterUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: isDark ? const Color(0xFF262A36) : Colors.grey.shade300,
-                        child: Icon(Icons.movie_outlined, color: subTextColor, size: 24),
-                      ),
-                    )
-                  : Container(
-                      color: isDark ? const Color(0xFF262A36) : Colors.grey.shade300,
-                      child: Icon(Icons.movie_outlined, color: subTextColor, size: 24),
-                    ),
-            ),
-          ),
-          const SizedBox(width: 12),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: cardRadius,
+        child: InkWell(
+          borderRadius: cardRadius,
+          onTap: () {
+            // Navigasi ke MovieDetailPage dengan membungkus credit menjadi data Drama
+            final Drama drama = Drama(
+              id: credit.id,
+              mediaType: credit.mediaType,
+              title: credit.title,
+              koreanTitle: credit.title,
+              genre: credit.mediaType == 'movie' ? 'Film' : 'Drama',
+              rating: credit.voteAverage > 0
+                  ? double.parse(credit.voteAverage.toStringAsFixed(1))
+                  : 8.0,
+              episodes: credit.mediaType == 'movie' ? 1 : 16,
+              watchedEpisodes: 0,
+              status: 'Rencana Ditonton',
+              priority: 'Sedang',
+              startDate: '',
+              endDate: '',
+              date: credit.releaseDate,
+              image: credit.posterUrl,
+              backdrop: credit.posterUrl,
+              rank: '#1',
+              popularity: '100',
+              watchers: '1000',
+              synopsis: credit.character.isNotEmpty && credit.character != 'Pemeran'
+                  ? 'Berperan sebagai ${credit.character}.'
+                  : 'Informasi filmografi untuk ${credit.title}.',
+              aired: credit.releaseDate,
+              duration: credit.mediaType == 'movie' ? '120 menit' : '60 menit',
+              contentRating: '13+',
+              genresList: [credit.mediaType == 'movie' ? 'Film' : 'Drama'],
+              tagsList: ['TMDB'],
+            );
 
-          // Detail di kanan: Judul di kanan atas, Tahun rilis di bawahnya, dan Nama Peran (character) di paling bawah
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Judul di kanan atas
-                Text(
-                  credit.title,
-                  style: TextStyle(
-                    color: textColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-
-                // Tahun rilis di bawahnya
-                Text(
-                  credit.releaseYear,
-                  style: TextStyle(
-                    color: subTextColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 6),
-
-                // Nama Peran (character) di paling bawah
-                Row(
-                  children: [
-                    Icon(
-                      Icons.person_pin_rounded,
-                      size: 13,
-                      color: primaryBlue,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        credit.character,
-                        style: TextStyle(
-                          color: primaryBlue,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+            context.push(
+              '/movie/${drama.id}',
+              extra: {
+                'drama': drama,
+                'apiService': _apiService,
+                'posterUrl': credit.posterUrl,
+              },
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Poster film di kiri (kotak kecil memanjang ke bawah)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: SizedBox(
+                  width: 55,
+                  height: 80,
+                  child: credit.posterUrl.isNotEmpty
+                      ? Image.network(
+                          credit.posterUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            color: isDark ? const Color(0xFF262A36) : Colors.grey.shade300,
+                            child: Icon(Icons.movie_outlined, color: subTextColor, size: 24),
+                          ),
+                        )
+                      : Container(
+                          color: isDark ? const Color(0xFF262A36) : Colors.grey.shade300,
+                          child: Icon(Icons.movie_outlined, color: subTextColor, size: 24),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // Detail di kanan: Judul di kanan atas, Tahun rilis di bawahnya, dan Nama Peran (character) di paling bawah
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Judul di kanan atas
+                    Text(
+                      credit.title,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
                       ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+
+                    // Tahun rilis di bawahnya
+                    Text(
+                      credit.releaseYear,
+                      style: TextStyle(
+                        color: subTextColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+
+                    // Nama Peran (character) di paling bawah
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person_pin_rounded,
+                          size: 13,
+                          color: primaryBlue,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            credit.character,
+                            style: TextStyle(
+                              color: primaryBlue,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
-    );
+    ),
+  );
   }
 }
 
