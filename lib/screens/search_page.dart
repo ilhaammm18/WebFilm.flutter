@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
 import '../models/drama.dart';
@@ -854,7 +854,7 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
               drama: item,
             );
             final String subtitle = year.isNotEmpty
-                ? '$categoryLabel â€¢ $year'
+                ? '$categoryLabel \u2022 $year'
                 : categoryLabel;
 
             final int tmdbId = item.id;
@@ -1268,8 +1268,11 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                         children: [
                           Text(
                             actor.name,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: Theme.of(context).brightness ==
+                                      Brightness.light
+                                  ? Colors.black87
+                                  : Colors.white,
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
                             ),
@@ -1282,7 +1285,10 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                             Text(
                               actor.koreanName,
                               style: TextStyle(
-                                color: Colors.grey.shade400,
+                                color: Theme.of(context).brightness ==
+                                        Brightness.light
+                                    ? Colors.grey[700]
+                                    : Colors.grey[400],
                                 fontSize: 12,
                               ),
                               maxLines: 1,
@@ -1293,7 +1299,10 @@ class _SearchPageState extends State<SearchPage> with SingleTickerProviderStateM
                           Text(
                             department,
                             style: TextStyle(
-                              color: Colors.grey.shade400,
+                              color: Theme.of(context).brightness ==
+                                      Brightness.light
+                                  ? Colors.grey[700]
+                                  : Colors.grey[400],
                               fontSize: 13,
                             ),
                             maxLines: 1,

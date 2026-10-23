@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
 import '../data/shared_data.dart';
@@ -173,7 +173,7 @@ class _RankingTabState extends State<RankingTab> {
       categoryText = isFilm ? 'Film' : 'Drama';
     }
 
-    return '$year â€¢ $categoryText';
+    return '$year \u2022 $categoryText';
   }
 
   @override
@@ -632,7 +632,7 @@ class _RankingTabState extends State<RankingTab> {
 
                 const SizedBox(width: 14),
 
-                // Judul, Subtitle (Tahun â€¢ Kategori), dan Skor Rating
+                // Judul, Subtitle (Tahun • Kategori), dan Skor Rating
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -652,7 +652,7 @@ class _RankingTabState extends State<RankingTab> {
                       ),
                       const SizedBox(height: 4),
 
-                      // Format Subtitle Spesifik: Tahun â€¢ Kategori
+                      // Format Subtitle Spesifik: Tahun • Kategori
                       Text(
                         _formatSubtitle(drama),
                         maxLines: 1,
