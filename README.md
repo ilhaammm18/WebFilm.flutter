@@ -164,43 +164,6 @@ lib/
 └── main.dart                         # Titik masuk aplikasi, inisialisasi environment & Supabase
 ```
 
----
-
-## 🚀 Cara Menjalankan Proyek secara Lokal
-
-1. **Clone repositori ini:**
-   ```bash
-   git clone https://github.com/ilhaammm18/WebFilm.flutter.git
-   cd WebFilm.flutter
-   ```
-
-2. **Unduh seluruh paket dependensi Flutter:**
-   ```bash
-   flutter pub get
-   ```
-
-3. **Siapkan file konfigurasi variabel lingkungan (`env.json`):**
-   Salin file `env.example.json` menjadi `env.json` di direktori *root* proyek (file `env.json` telah dimasukkan ke dalam `.gitignore` agar kredensial tetap aman):
-   ```json
-   {
-     "TMDB_API_KEY": "ISI_DENGAN_API_KEY_TMDB_ANDA",
-     "SUPABASE_URL": "ISI_DENGAN_URL_PROJECT_SUPABASE_ANDA",
-     "SUPABASE_ANON_KEY": "ISI_DENGAN_ANON_KEY_SUPABASE_ANDA"
-   }
-   ```
-
-4. **Jalankan aplikasi di Google Chrome (Port 3000):**
-   ```bash
-   flutter run -d chrome --web-port=3000 --dart-define-from-file=env.json
-   ```
-
-5. **Menjalankan Pengujian (*Unit & Widget Testing*):**
-   ```bash
-   flutter test
-   ```
-
----
-
 ## ☁️ Konfigurasi Deployment di Vercel
 
 Untuk melakukan *deployment* Flutter Web di **Vercel**:
