@@ -78,6 +78,20 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
     super.dispose();
   }
 
+  Future<void> _handleBackToLogin() async {
+    if (_isLoading) return;
+    try {
+      final client = widget.supabaseClient ?? Supabase.instance.client;
+      await client.auth.signOut();
+    } catch (_) {}
+    if (!mounted) return;
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    } else {
+      context.go('/login');
+    }
+  }
+
   Future<void> _handleSaveProfile() async {
     if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
@@ -194,6 +208,16 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
         elevation: 0,
         centerTitle: true,
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          key: const Key('back_to_login_appbar_button'),
+          tooltip: 'Kembali ke Login',
+          onPressed: _isLoading ? null : _handleBackToLogin,
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: textColor,
+            size: 20,
+          ),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -457,6 +481,40 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
                               letterSpacing: 0.1,
                             ),
                           ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // 7. TOMBOL KEMBALI KE MENU LOGIN
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    key: const Key('back_to_login_button'),
+                    onPressed: _isLoading ? null : _handleBackToLogin,
+                    icon: Icon(
+                      Icons.arrow_back_rounded,
+                      size: 18,
+                      color: subTextColor,
+                    ),
+                    label: Text(
+                      'Kembali ke Halaman Login',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.12)
+                            : Colors.grey.shade300,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),

@@ -79,6 +79,7 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
     try {
       _authSubscription = _supabase.auth.onAuthStateChange.listen((authState) {
         if (!mounted || _isLoading || _isCheckingProfile) return;
+        if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
         if (authState.event == AuthChangeEvent.signedIn &&
             authState.session?.user != null) {
           _checkProfileAndRedirect(authState.session!.user, isOAuth: true);
@@ -184,22 +185,68 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
             ),
           );
 
-          if (widget.nextScreen != null) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (context) => CompleteProfilePage(
-                  supabaseClient: _supabase,
-                  nextScreen: widget.nextScreen,
-                ),
-              ),
-            );
-          } else {
-            context.go('/complete-profile');
-          }
+          await _pushCompleteProfilePage();
         }
       }
     } on AuthException catch (e) {
       if (!mounted) return;
+
+      // Tangani kasus pada tab Register saat akun sudah terbuat tetapi biodata belum lengkap ("User already registered"):
+      // Lakukan login otomatis di balik layar menggunakan signInWithPassword, lalu cek tabel profiles.
+      if (!_isLogin) {
+        final errLower = e.message.toLowerCase();
+        final codeLower = (e.code ?? '').toLowerCase();
+        final bool isAlreadyRegistered =
+            errLower.contains('already registered') ||
+                errLower.contains('already exists') ||
+                codeLower == 'user_already_exists';
+
+        if (isAlreadyRegistered) {
+          try {
+            final AuthResponse signInRes =
+                await _supabase.auth.signInWithPassword(
+              email: email,
+              password: password,
+            );
+
+            if (signInRes.user != null) {
+              SharedData.markEmailAsManualAccount(email);
+              final signedInUser = signInRes.user!;
+              final bool hasProfile = await SharedData.isUserProfileRegistered(
+                client: _supabase,
+                userId: signedInUser.id,
+                email: signedInUser.email,
+                userMetadata: signedInUser.userMetadata,
+                allowMetadataFallback: false,
+              );
+
+              if (!mounted) return;
+
+              if (!hasProfile) {
+                // Profil belum ada di tabel profiles -> langsung arahkan kembali ke halaman "Lengkapi Profilmu"
+                // tanpa menampilkan pesan error merah User already registered.
+                await _pushCompleteProfilePage();
+                return;
+              } else {
+                // Data profil sudah lengkap di tabel profiles -> arahkan langsung ke halaman utama.
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Akun Anda sudah aktif! Mengalihkan ke halaman utama...',
+                    ),
+                    backgroundColor: Colors.green,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+                _navigateToNext(signedInUser.id);
+                return;
+              }
+            }
+          } on AuthException catch (_) {
+            // Jika password berbeda atau akun terdaftar via Google, lanjutkan ke pengecekan berikutnya
+          } catch (_) {}
+        }
+      }
 
       // Periksa apakah email tersebut terdaftar melalui Google Sign-In
       final bool isGoogleAccount = await SharedData.isGoogleAccountEmail(
@@ -296,22 +343,30 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
       if (hasProfile) {
         _navigateToNext(user.id);
       } else {
-        if (widget.nextScreen != null) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => CompleteProfilePage(
-                supabaseClient: _supabase,
-                nextScreen: widget.nextScreen,
-              ),
-            ),
-          );
-        } else {
-          context.go('/complete-profile');
-        }
+        await _pushCompleteProfilePage();
       }
     } finally {
       _isCheckingProfile = false;
     }
+  }
+
+  /// Navigasi ke halaman CompleteProfilePage menggunakan Navigator.push biasa
+  /// agar state form pada halaman sebelumnya (email, password, & tab aktif) tetap terjaga saat kembali.
+  Future<void> _pushCompleteProfilePage() async {
+    if (!mounted) return;
+    if (_isLoading) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CompleteProfilePage(
+          supabaseClient: _supabase,
+          nextScreen: widget.nextScreen,
+        ),
+      ),
+    );
   }
 
   /// Logika Autentikasi Google OAuth menggunakan Supabase

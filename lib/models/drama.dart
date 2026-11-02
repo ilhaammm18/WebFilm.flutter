@@ -601,12 +601,21 @@ class Drama {
         runtime = ((json['episode_run_time'] as List).first as num?)?.toInt();
       }
     }
-    final List<int> gIds = (json['genre_ids'] as List<dynamic>?)
+    final List<int> rawGenreIds = (json['genre_ids'] as List<dynamic>?)
             ?.map((e) => (e as num).toInt())
             .toList() ??
         <int>[];
 
     final List<dynamic>? rawGenres = json['genres'] as List<dynamic>?;
+    final List<int> gIds = rawGenreIds.isNotEmpty
+        ? rawGenreIds
+        : (rawGenres != null
+            ? rawGenres
+                .whereType<Map<String, dynamic>>()
+                .map((g) => (g['id'] as num?)?.toInt() ?? 0)
+                .where((id) => id > 0)
+                .toList()
+            : <int>[]);
     final List<String> parsedGenres = (rawGenres != null && rawGenres.isNotEmpty)
         ? rawGenres
             .map((g) => (g is Map<String, dynamic> ? (g['name'] as String? ?? '') : ''))
@@ -819,8 +828,25 @@ class Drama {
     final String priority = map['priority'] as String? ?? 'Sedang';
     final String startDate = map['start_date'] as String? ?? '';
     final String endDate = map['end_date'] as String? ?? '';
-    final String date = map['date'] as String? ?? '';
-    final String image = map['image'] as String? ?? '';
+    final String date = (map['date'] as String? ??
+            map['release_date'] as String? ??
+            map['first_air_date'] as String? ??
+            map['releaseDate'] as String? ??
+            '')
+        .trim();
+    final String rawImage = (map['image'] as String? ??
+            map['imageUrl'] as String? ??
+            map['image_url'] as String? ??
+            map['poster_url'] as String? ??
+            map['poster_path'] as String? ??
+            map['posterPath'] as String? ??
+            '')
+        .trim();
+    final String image = (rawImage.isNotEmpty &&
+            !rawImage.startsWith('http') &&
+            rawImage.startsWith('/'))
+        ? 'https://image.tmdb.org/t/p/w500$rawImage'
+        : rawImage;
     final String backdrop = map['backdrop'] as String? ?? image;
     final String rank = map['rank'] as String? ?? '#1';
     final String popularity = map['popularity'] as String? ?? '100';

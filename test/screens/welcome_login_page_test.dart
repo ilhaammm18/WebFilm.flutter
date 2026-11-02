@@ -625,6 +625,96 @@ void main() {
       mockSupabase.dispose();
     });
 
+    testWidgets(
+        'Tombol kembali (<) di halaman Lengkapi Profilmu mengembalikan ke tab Register dengan mempertahankan email & password',
+        (tester) async {
+      final mockSupabase = createMockSupabase();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WelcomeLoginPage(
+            supabaseClient: mockSupabase,
+          ),
+        ),
+      );
+
+      // Pindah ke tab Register dan isi email & password
+      await tester.tap(find.byKey(const Key('toggle_register')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.byKey(const Key('email_field')), 'keepstate@example.com');
+      await tester.enterText(
+          find.byKey(const Key('password_field')), 'keepPassword123');
+
+      await tester.tap(find.byKey(const Key('login_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      // Berada di halaman CompleteProfilePage
+      expect(find.byType(CompleteProfilePage), findsOneWidget);
+
+      // Tekan tombol kembali (<) di pojok kiri atas AppBar
+      await tester.tap(find.byKey(const Key('back_to_login_appbar_button')));
+      await tester.pumpAndSettle();
+
+      // Kembali ke WelcomeLoginPage pada tab Register dengan email & password tetap utuh
+      expect(find.byType(WelcomeLoginPage), findsOneWidget);
+      expect(find.text('Register'), findsNWidgets(2));
+
+      final emailField = tester.widget<TextFormField>(
+        find.byKey(const Key('email_field')),
+      );
+      final passwordField = tester.widget<TextFormField>(
+        find.byKey(const Key('password_field')),
+      );
+      expect(emailField.controller?.text, equals('keepstate@example.com'));
+      expect(passwordField.controller?.text, equals('keepPassword123'));
+
+      mockSupabase.dispose();
+    });
+
+    testWidgets(
+        'Tab Register menangani User already registered dengan signInWithPassword otomatis dan mengarahkan ke CompleteProfilePage jika profil belum ada',
+        (tester) async {
+      final mockSupabase = createMockSupabase(
+        shouldFailSignUp: true,
+        signUpErrorMessage: 'User already registered',
+        userMetadata: const {},
+        hasProfileTableResponse: true,
+        profileRecord: null,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WelcomeLoginPage(
+            supabaseClient: mockSupabase,
+          ),
+        ),
+      );
+
+      // Pindah ke tab Register
+      await tester.tap(find.byKey(const Key('toggle_register')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.byKey(const Key('email_field')), 'pendingprofile@example.com');
+      await tester.enterText(
+          find.byKey(const Key('password_field')), 'password123');
+
+      await tester.tap(find.byKey(const Key('login_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      // Langsung masuk ke CompleteProfilePage tanpa menampilkan error merah User already registered
+      expect(find.byType(CompleteProfilePage), findsOneWidget);
+      expect(find.textContaining('User already registered'), findsNothing);
+
+      mockSupabase.dispose();
+    });
+
     testWidgets('Responsif terhadap perubahan tema Light Mode dan Dark Mode',
         (tester) async {
       // 1. Pengujian dalam Light Mode

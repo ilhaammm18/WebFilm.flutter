@@ -178,6 +178,8 @@ void main() {
       // Verifikasi tombol simpan
       expect(find.byKey(const Key('save_profile_button')), findsOneWidget);
       expect(find.text('Simpan & Mulai Jelajahi'), findsOneWidget);
+      expect(find.byKey(const Key('back_to_login_button')), findsOneWidget);
+      expect(find.text('Kembali ke Halaman Login'), findsOneWidget);
     });
 
     testWidgets('Validasi: Nama Lengkap dan Username wajib diisi, Username tanpa spasi',
