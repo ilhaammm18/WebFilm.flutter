@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
 import '../widgets/app_drawer.dart';
@@ -206,9 +206,10 @@ class _ProfileTabState extends State<ProfileTab> {
       // 1. Baca metadata profil pengguna dari Supabase Auth
       if (user != null) {
         final metadata = user.userMetadata ?? {};
-        if (metadata['full_name'] != null &&
-            (metadata['full_name'] as String).trim().isNotEmpty) {
-          _fullName = (metadata['full_name'] as String).trim();
+        final metaFullName =
+            (metadata['full_name'] as String? ?? metadata['name'] as String? ?? '').trim();
+        if (metaFullName.isNotEmpty) {
+          _fullName = metaFullName;
         }
         if (metadata['username'] != null &&
             (metadata['username'] as String).trim().isNotEmpty) {
@@ -218,9 +219,12 @@ class _ProfileTabState extends State<ProfileTab> {
             (metadata['bio'] as String).trim().isNotEmpty) {
           _bio = (metadata['bio'] as String).trim();
         }
-        if (metadata['avatar_url'] != null &&
-            (metadata['avatar_url'] as String).trim().isNotEmpty) {
-          _avatarUrl = (metadata['avatar_url'] as String).trim();
+        final metaAvatar = SharedData.sanitizeAvatarUrl(
+          metadata['avatar_url'] as String? ?? metadata['picture'] as String?,
+          fallback: _avatarUrl,
+        );
+        if (metaAvatar.isNotEmpty) {
+          _avatarUrl = metaAvatar;
         }
       }
 
@@ -247,10 +251,14 @@ class _ProfileTabState extends State<ProfileTab> {
             }
             if (profileData['avatar_url'] != null &&
                 (profileData['avatar_url'] as String).trim().isNotEmpty) {
-              _avatarUrl = (profileData['avatar_url'] as String).trim();
+              _avatarUrl = SharedData.sanitizeAvatarUrl(
+                profileData['avatar_url'] as String,
+                fallback: _avatarUrl,
+              );
             }
-          } else {
-            // Auto sinkronkan akun lama ke tabel profiles
+          } else if ((user?.userMetadata?['username'] as String? ?? '').trim().isNotEmpty &&
+              (user?.userMetadata?['full_name'] as String? ?? '').trim().isNotEmpty) {
+            // Auto sinkronkan akun lama yang sudah memiliki username & full_name ke tabel profiles
             try {
               await client.from('profiles').upsert({
                 'id': userId,

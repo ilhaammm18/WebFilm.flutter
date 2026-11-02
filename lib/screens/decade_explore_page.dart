@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../routes/app_router.dart';
 import '../models/drama.dart';
 import '../services/api_service.dart';
@@ -543,7 +543,7 @@ class _DecadeExplorePageState extends State<DecadeExplorePage> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          'â€¢ ${item.genre.isNotEmpty ? item.genre : 'Film'}',
+                          '\u2022 ${item.genre.isNotEmpty ? item.genre : 'Film'}',
                           style: const TextStyle(
                               color: Colors.grey, fontSize: 11),
                           maxLines: 1,

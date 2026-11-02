@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
 import '../data/shared_data.dart';
@@ -55,7 +55,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
         }
         if (metadata['avatar_url'] != null &&
             (metadata['avatar_url'] as String).trim().isNotEmpty) {
-          _avatarUrl = (metadata['avatar_url'] as String).trim();
+          _avatarUrl = SharedData.sanitizeAvatarUrl(
+            metadata['avatar_url'] as String,
+            fallback: _avatarUrl,
+          );
         }
       }
     } catch (_) {}
@@ -298,7 +301,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
             'username': newUsername,
             'bio': newBio,
             'avatar_url': _avatarUrl,
-            'updated_at': DateTime.now().toIso8601String(),
           });
         } catch (_) {}
       }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/shared_data.dart';
 import '../models/actor.dart';
 import '../models/drama.dart';
 import '../services/api_service.dart';
@@ -34,7 +35,7 @@ class AppRouter {
   static final GoRouter router = GoRouter(
     navigatorKey: rootNavigatorKey,
     initialLocation: '/',
-    redirect: (BuildContext context, GoRouterState state) {
+    redirect: (BuildContext context, GoRouterState state) async {
       bool isLoggedIn = false;
       try {
         isLoggedIn = Supabase.instance.client.auth.currentSession != null;
@@ -45,6 +46,7 @@ class AppRouter {
       final location = state.matchedLocation;
       final isLoggingIn = location == '/login';
       final isSplash = location == '/';
+      final isCompletingProfile = location == '/complete-profile';
 
       if (!isLoggedIn) {
         // Jika pengguna belum login (cek via Supabase Auth), arahkan ke /login.
@@ -55,8 +57,20 @@ class AppRouter {
         return '/login';
       }
 
-      // Jika sudah login dan berada di / atau /login, arahkan ke /home.
-      if (isSplash || isLoggingIn) {
+      // Pengguna sudah login (termasuk pasca Google Sign-In OAuth redirect):
+      // Cek apakah record profil pengguna dengan id atau email sudah terdaftar di tabel profiles Supabase.
+      final hasProfile = await SharedData.isUserProfileRegistered();
+
+      if (!hasProfile) {
+        // Jika profil belum terdaftar di database, wajib arahkan ke formulir pengisian data diri (/complete-profile).
+        if (isCompletingProfile) {
+          return null;
+        }
+        return '/complete-profile';
+      }
+
+      // Jika profil sudah terdaftar dan berada di /, /login, atau /complete-profile, arahkan langsung ke /home.
+      if (isSplash || isLoggingIn || isCompletingProfile) {
         return '/home';
       }
 

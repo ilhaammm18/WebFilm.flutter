@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../routes/app_router.dart';
 import '../models/drama.dart';
 import '../services/api_service.dart';
@@ -169,7 +169,7 @@ class _GenreDetailPageState extends State<GenreDetailPage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '$releaseYear â€¢ â˜… ${item.rating.toStringAsFixed(1)}',
+                      '$releaseYear \u2022 \u2605 ${item.rating.toStringAsFixed(1)}',
                       style: TextStyle(
                         color: subTextColor,
                         fontSize: 11,

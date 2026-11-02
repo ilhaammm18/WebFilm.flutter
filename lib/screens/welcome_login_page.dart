@@ -1,4 +1,7 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
@@ -28,6 +31,9 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
   bool get isLoginMode => _isLogin;
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
+  bool _isCheckingProfile = false;
+  StreamSubscription<AuthState>? _authSubscription;
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -68,6 +74,28 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
     _passwordController.addListener(_onFieldChanged);
     _emailFocusNode.addListener(_onFieldChanged);
     _passwordFocusNode.addListener(_onFieldChanged);
+
+    // Dengarkan perubahan status autentikasi (termasuk callback Google Sign-In)
+    try {
+      _authSubscription = _supabase.auth.onAuthStateChange.listen((authState) {
+        if (!mounted || _isLoading || _isCheckingProfile) return;
+        if (authState.event == AuthChangeEvent.signedIn &&
+            authState.session?.user != null) {
+          _checkProfileAndRedirect(authState.session!.user, isOAuth: true);
+        }
+      });
+
+      // Jika pengguna kembali dari redirect OAuth Google dengan sesi aktif di halaman ini,
+      // periksa profil database dan arahkan sesuai status pendaftaran profilnya.
+      final existingUser = _supabase.auth.currentUser;
+      if (existingUser != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _checkProfileAndRedirect(existingUser, isOAuth: true);
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   void _onFieldChanged() {
@@ -78,6 +106,7 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
 
   @override
   void dispose() {
+    _authSubscription?.cancel();
     _emailController.removeListener(_onFieldChanged);
     _passwordController.removeListener(_onFieldChanged);
     _emailFocusNode.removeListener(_onFieldChanged);
@@ -89,9 +118,9 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
     super.dispose();
   }
 
-  // Logika autentikasi Supabase Auth
+  // Logika autentikasi Supabase Auth (Email & Password)
   Future<void> _handleAuth() async {
-    if (_isLoading) return;
+    if (_isLoading || _isGoogleLoading) return;
 
     final String email = _emailController.text.trim();
     final String password = _passwordController.text.trim();
@@ -120,48 +149,9 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
         );
 
         if (response.user != null) {
+          SharedData.markEmailAsManualAccount(email);
           if (!mounted) return;
-          final user = response.user!;
-          final metadata = user.userMetadata ?? {};
-          final fullName = (metadata['full_name'] as String? ?? '').trim();
-          final username = (metadata['username'] as String? ?? '').trim();
-
-          bool hasProfile = fullName.isNotEmpty && username.isNotEmpty;
-          if (!hasProfile) {
-            try {
-              final profile = await _supabase
-                  .from('profiles')
-                  .select('full_name, username')
-                  .eq('id', user.id)
-                  .maybeSingle();
-              if (profile != null) {
-                final dbName = (profile['full_name'] as String? ?? '').trim();
-                final dbUser = (profile['username'] as String? ?? '').trim();
-                if (dbName.isNotEmpty && dbUser.isNotEmpty) {
-                  hasProfile = true;
-                }
-              }
-            } catch (_) {}
-          }
-
-          if (!mounted) return;
-
-          if (hasProfile) {
-            _navigateToNext(user.id);
-          } else {
-            if (widget.nextScreen != null) {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(
-                  builder: (context) => CompleteProfilePage(
-                    supabaseClient: _supabase,
-                    nextScreen: widget.nextScreen,
-                  ),
-                ),
-              );
-            } else {
-              context.go('/complete-profile');
-            }
-          }
+          await _checkProfileAndRedirect(response.user!, isOAuth: false);
         } else {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -182,6 +172,7 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
         );
 
         if (response.user != null) {
+          SharedData.markEmailAsManualAccount(email);
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -209,6 +200,32 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
       }
     } on AuthException catch (e) {
       if (!mounted) return;
+
+      // Periksa apakah email tersebut terdaftar melalui Google Sign-In
+      final bool isGoogleAccount = await SharedData.isGoogleAccountEmail(
+        email,
+        client: _supabase,
+        authError: e,
+      );
+      if (!mounted) return;
+
+      if (isGoogleAccount) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Email ini sudah terdaftar melalui Google. Mengalihkan ke login Google...',
+            ),
+            backgroundColor: _primaryBlue,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        await _handleGoogleSignIn();
+        return;
+      }
+
       if (_isLogin) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -250,6 +267,327 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
     }
   }
 
+  /// Mengecek apakah record profil pengguna dengan id atau email sudah ada di tabel `profiles` Supabase.
+  /// - Jika belum ada, arahkan ke halaman pengisian data diri (/complete-profile).
+  /// - Jika sudah ada, arahkan langsung ke halaman utama (/home).
+  Future<void> _checkProfileAndRedirect(
+    User user, {
+    bool isOAuth = false,
+  }) async {
+    if (_isCheckingProfile || !mounted) return;
+    _isCheckingProfile = true;
+
+    try {
+      SharedData.recordAuthProviderFromUser(
+        email: user.email,
+        appMetadata: user.appMetadata,
+        userMetadata: user.userMetadata,
+      );
+      final bool hasProfile = await SharedData.isUserProfileRegistered(
+        client: _supabase,
+        userId: user.id,
+        email: user.email,
+        userMetadata: user.userMetadata,
+        allowMetadataFallback: !isOAuth,
+      );
+
+      if (!mounted) return;
+
+      if (hasProfile) {
+        _navigateToNext(user.id);
+      } else {
+        if (widget.nextScreen != null) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => CompleteProfilePage(
+                supabaseClient: _supabase,
+                nextScreen: widget.nextScreen,
+              ),
+            ),
+          );
+        } else {
+          context.go('/complete-profile');
+        }
+      }
+    } finally {
+      _isCheckingProfile = false;
+    }
+  }
+
+  /// Logika Autentikasi Google OAuth menggunakan Supabase
+  Future<void> _handleGoogleSignIn() async {
+    if (_isLoading || _isGoogleLoading) return;
+
+    setState(() {
+      _isGoogleLoading = true;
+    });
+
+    try {
+      await _supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: kIsWeb ? Uri.base.origin : null,
+      );
+
+      // Jika sesi langsung tersedia (misal pada alur non-redirect / popup / pengujian),
+      // cek apakah profil pengguna sudah terdaftar di tabel profiles Supabase.
+      final currentUser = _supabase.auth.currentUser;
+      if (currentUser != null && mounted) {
+        await _checkProfileAndRedirect(currentUser, isOAuth: true);
+      }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.message.isNotEmpty
+                ? 'Gagal masuk dengan Google: ${e.message}'
+                : 'Gagal masuk dengan Google. Silakan coba lagi.',
+          ),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal menghubungkan akun Google: $error'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Dialog Lupa Kata Sandi (Forgot Password) menggunakan supabase.auth.resetPasswordForEmail()
+  void _showForgotPasswordDialog() {
+    final resetEmailController = TextEditingController(
+      text: _emailController.text.trim(),
+    );
+    bool isSending = false;
+    String? errorMessage;
+
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color cardColor = isDark ? const Color(0xFF1E212B) : Colors.white;
+    final Color textColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final Color subTextColor =
+        isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    final Color fieldBg =
+        isDark ? const Color(0xFF262A37) : Colors.grey.shade100;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              backgroundColor: cardColor,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: _primaryBlue.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.lock_reset_rounded,
+                      color: _primaryBlue,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Lupa Kata Sandi?',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Masukkan alamat email yang terdaftar pada akun MyWatchList Anda. Kami akan mengirimkan tautan untuk mengatur ulang kata sandi.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: subTextColor,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      key: const Key('reset_password_email_field'),
+                      controller: resetEmailController,
+                      keyboardType: TextInputType.emailAddress,
+                      style: TextStyle(color: textColor, fontSize: 14),
+                      decoration: InputDecoration(
+                        labelText: 'Alamat Email',
+                        hintText: 'nama@email.com',
+                        labelStyle: TextStyle(color: subTextColor),
+                        hintStyle: TextStyle(
+                          color: isDark
+                              ? Colors.grey.shade500
+                              : Colors.grey.shade400,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.mail_outline_rounded,
+                          color: _primaryBlue,
+                          size: 20,
+                        ),
+                        filled: true,
+                        fillColor: fieldBg,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: _primaryBlue,
+                            width: 1.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            color: Colors.redAccent,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              errorMessage!,
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSending
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    'Batal',
+                    style: TextStyle(color: subTextColor),
+                  ),
+                ),
+                ElevatedButton(
+                  key: const Key('send_reset_password_button'),
+                  onPressed: isSending
+                      ? null
+                      : () async {
+                          final resetEmail =
+                              resetEmailController.text.trim();
+                          if (resetEmail.isEmpty) {
+                            setDialogState(() {
+                              errorMessage =
+                                  'Masukkan alamat email Anda terlebih dahulu.';
+                            });
+                            return;
+                          }
+                          if (!resetEmail.contains('@')) {
+                            setDialogState(() {
+                              errorMessage =
+                                  'Format alamat email tidak valid.';
+                            });
+                            return;
+                          }
+
+                          setDialogState(() {
+                            isSending = true;
+                            errorMessage = null;
+                          });
+
+                          try {
+                            await _supabase.auth.resetPasswordForEmail(
+                              resetEmail,
+                              redirectTo: kIsWeb ? Uri.base.origin : null,
+                            );
+
+                            if (!dialogContext.mounted) return;
+                            Navigator.of(dialogContext).pop();
+
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Tautan pemulihan kata sandi telah dikirim ke $resetEmail. Silakan periksa email Anda.',
+                                ),
+                                backgroundColor: const Color(0xFF10B981),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          } on AuthException catch (e) {
+                            setDialogState(() {
+                              isSending = false;
+                              errorMessage = e.message.isNotEmpty
+                                  ? e.message
+                                  : 'Gagal mengirim email pemulihan kata sandi.';
+                            });
+                          } catch (e) {
+                            setDialogState(() {
+                              isSending = false;
+                              errorMessage =
+                                  'Gagal mengirim email pemulihan: $e';
+                            });
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: isSending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text('Kirim Tautan Reset'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _navigateToNext([dynamic userId]) {
     // Muat data watchlist user yang aktif dari Supabase
     SharedData.fetchUserWatchlist(client: _supabase);
@@ -276,11 +614,14 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
     const Color darkBg = Color(0xFF15171E);
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color formSurfaceColor = Theme.of(context).colorScheme.surface;
-    final Color inputFieldFillColor =
-        isDark ? (Colors.grey[800] ?? const Color(0xFF2C2C2C)) : (Colors.grey[100] ?? const Color(0xFFF5F5F5));
+    final Color inputFieldFillColor = isDark
+        ? (Colors.grey[800] ?? const Color(0xFF2C2C2C))
+        : (Colors.grey[100] ?? const Color(0xFFF5F5F5));
     final Color textColor = isDark ? Colors.white : const Color(0xFF1A1A1A);
     const Color hintColor = Colors.grey;
-    final Color borderColor = isDark ? (Colors.grey[700] ?? const Color(0xFF424242)) : Colors.grey.shade200;
+    final Color borderColor = isDark
+        ? (Colors.grey[700] ?? const Color(0xFF424242))
+        : Colors.grey.shade200;
 
     final bool isEmailActive =
         _emailFocusNode.hasFocus || _emailController.text.isNotEmpty;
@@ -421,7 +762,8 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
                           ),
                         ],
                       ),
-                      padding: const EdgeInsets.fromLTRB(24.0, 24.0, 24.0, 28.0),
+                      padding:
+                          const EdgeInsets.fromLTRB(24.0, 24.0, 24.0, 28.0),
                       child: SafeArea(
                         top: false,
                         child: SingleChildScrollView(
@@ -497,12 +839,15 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
                                     color: passwordIconColor,
                                   ),
                                   suffixIcon: IconButton(
-                                    key: const Key('toggle_password_visibility'),
+                                    key: const Key(
+                                        'toggle_password_visibility'),
                                     icon: Icon(
                                       _obscurePassword
                                           ? Icons.visibility_off_outlined
                                           : Icons.visibility_outlined,
-                                      color: Theme.of(context).iconTheme.color ?? Colors.grey,
+                                      color:
+                                          Theme.of(context).iconTheme.color ??
+                                              Colors.grey,
                                     ),
                                     onPressed: () {
                                       setState(() {
@@ -542,14 +887,49 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
                                 ),
                               ),
 
-                              const SizedBox(height: 24),
+                              // d. Tautan Lupa Kata Sandi di dekat kolom password
+                              if (_isLogin) ...[
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton(
+                                    key: const Key('forgot_password_button'),
+                                    onPressed:
+                                        (_isLoading || _isGoogleLoading)
+                                            ? null
+                                            : _showForgotPasswordDialog,
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: _primaryBlue,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    child: const Text(
+                                      'Lupa kata sandi?',
+                                      style: TextStyle(
+                                        color: _primaryBlue,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                              ] else
+                                const SizedBox(height: 24),
 
-                              // e. Tombol utama (ElevatedButton) warna biru gelap bertuliskan 'Login'
+                              // e. Tombol utama (ElevatedButton) warna biru bertuliskan 'Login' / 'Register'
                               SizedBox(
                                 height: 52,
                                 child: ElevatedButton(
                                   key: const Key('login_button'),
-                                  onPressed: _isLoading ? null : _handleAuth,
+                                  onPressed: (_isLoading || _isGoogleLoading)
+                                      ? null
+                                      : _handleAuth,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: _primaryBlue,
                                     foregroundColor: Colors.white,
@@ -574,6 +954,92 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
                                             fontWeight: FontWeight.bold,
                                             letterSpacing: 0.5,
                                           ),
+                                        ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 18),
+
+                              // f. Pemisah "Atau lanjutkan dengan"
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Divider(
+                                      color: borderColor,
+                                      thickness: 1,
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                    child: Text(
+                                      'Atau',
+                                      style: TextStyle(
+                                        color: isDark
+                                            ? Colors.grey.shade400
+                                            : Colors.grey.shade600,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Divider(
+                                      color: borderColor,
+                                      thickness: 1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+
+                              // g. Tombol Google Sign-In dengan ikon logo Google
+                              SizedBox(
+                                height: 50,
+                                child: OutlinedButton(
+                                  key: const Key('google_sign_in_button'),
+                                  onPressed: (_isLoading || _isGoogleLoading)
+                                      ? null
+                                      : _handleGoogleSignIn,
+                                  style: OutlinedButton.styleFrom(
+                                    backgroundColor: isDark
+                                        ? (Colors.grey[850] ??
+                                            const Color(0xFF22252E))
+                                        : Colors.white,
+                                    foregroundColor: textColor,
+                                    side: BorderSide(
+                                      color: borderColor,
+                                      width: 1.2,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                  ),
+                                  child: _isGoogleLoading
+                                      ? SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.3,
+                                            color: textColor,
+                                          ),
+                                        )
+                                      : Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            const _GoogleLogoIcon(size: 20),
+                                            const SizedBox(width: 12),
+                                            Text(
+                                              'Lanjutkan dengan Google',
+                                              style: TextStyle(
+                                                color: textColor,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w600,
+                                                letterSpacing: 0.2,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                 ),
                               ),
@@ -607,7 +1073,7 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
             child: GestureDetector(
               key: const Key('toggle_login'),
               onTap: () {
-                if (_isLoading) return;
+                if (_isLoading || _isGoogleLoading) return;
                 if (!_isLogin) {
                   setState(() {
                     _isLogin = true;
@@ -651,7 +1117,7 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
             child: GestureDetector(
               key: const Key('toggle_register'),
               onTap: () {
-                if (_isLoading) return;
+                if (_isLoading || _isGoogleLoading) return;
                 if (_isLogin) {
                   setState(() {
                     _isLogin = false;
@@ -730,4 +1196,94 @@ class _WelcomeLoginPageState extends State<WelcomeLoginPage> {
       ),
     );
   }
+}
+
+/// Widget ikon vektor logo Google resmi 4-warna (Biru, Merah, Kuning, Hijau)
+class _GoogleLogoIcon extends StatelessWidget {
+  final double size;
+
+  const _GoogleLogoIcon({this.size = 20});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: _GoogleLogoPainter(),
+      ),
+    );
+  }
+}
+
+class _GoogleLogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double strokeWidth = size.width * 0.19;
+    final Offset center = Offset(size.width / 2, size.height / 2);
+    final double radius = (size.width - strokeWidth) / 2;
+    final Rect rect = Rect.fromCircle(center: center, radius: radius);
+
+    final Paint paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.butt;
+
+    // 1. Busur Merah (Atas)
+    paint.color = const Color(0xFFEA4335);
+    canvas.drawArc(
+      rect,
+      -math.pi * 0.78,
+      math.pi * 0.56,
+      false,
+      paint,
+    );
+
+    // 2. Busur Kuning (Kiri)
+    paint.color = const Color(0xFFFBBC05);
+    canvas.drawArc(
+      rect,
+      math.pi * 0.78,
+      math.pi * 0.44,
+      false,
+      paint,
+    );
+
+    // 3. Busur Hijau (Bawah)
+    paint.color = const Color(0xFF34A853);
+    canvas.drawArc(
+      rect,
+      math.pi * 0.22,
+      math.pi * 0.56,
+      false,
+      paint,
+    );
+
+    // 4. Busur Biru (Kanan Bawah) + Palang Horizontal Tengah "G"
+    paint.color = const Color(0xFF4285F4);
+    canvas.drawArc(
+      rect,
+      -math.pi * 0.04,
+      math.pi * 0.28,
+      false,
+      paint,
+    );
+
+    final Paint barPaint = Paint()
+      ..color = const Color(0xFF4285F4)
+      ..style = PaintingStyle.fill;
+
+    canvas.drawRect(
+      Rect.fromLTWH(
+        center.dx,
+        center.dy - strokeWidth * 0.48,
+        radius + strokeWidth * 0.45,
+        strokeWidth * 0.96,
+      ),
+      barPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

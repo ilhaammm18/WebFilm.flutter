@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
@@ -47,9 +47,10 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
     try {
       final client = widget.supabaseClient ?? Supabase.instance.client;
       final metadata = client.auth.currentUser?.userMetadata ?? {};
-      if (metadata['full_name'] != null &&
-          (metadata['full_name'] as String).trim().isNotEmpty) {
-        _fullNameController.text = (metadata['full_name'] as String).trim();
+      final metaFullName =
+          (metadata['full_name'] as String? ?? metadata['name'] as String? ?? '').trim();
+      if (metaFullName.isNotEmpty) {
+        _fullNameController.text = metaFullName;
       }
       if (metadata['username'] != null &&
           (metadata['username'] as String).trim().isNotEmpty) {
@@ -59,9 +60,12 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
           (metadata['bio'] as String).trim().isNotEmpty) {
         _bioController.text = (metadata['bio'] as String).trim();
       }
-      if (metadata['avatar_url'] != null &&
-          (metadata['avatar_url'] as String).trim().isNotEmpty) {
-        _selectedAvatar = (metadata['avatar_url'] as String).trim();
+      final metaAvatar = SharedData.sanitizeAvatarUrl(
+        metadata['avatar_url'] as String? ?? metadata['picture'] as String?,
+        fallback: _selectedAvatar,
+      );
+      if (metaAvatar.isNotEmpty) {
+        _selectedAvatar = metaAvatar;
       }
     } catch (_) {}
   }
@@ -112,12 +116,19 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
             'username': username,
             'bio': bio,
             'avatar_url': avatar,
-            'updated_at': DateTime.now().toIso8601String(),
           });
         }
       } catch (_) {
         // Abaikan jika tabel profiles belum dibuat di remote database
       }
+
+      // Perbarui state profil global agar halaman utama langsung menampilkan data terbaru
+      SharedData.userProfileNotifier.value = UserProfileData(
+        fullName: fullName,
+        username: username,
+        bio: bio,
+        avatarUrl: avatar,
+      );
 
       // 3. Muat data watchlist pengguna
       try {
@@ -285,11 +296,11 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
                 ),
                 const SizedBox(height: 18),
 
-                // 4. INPUT USERNAME (Wajib, Tanpa Spasi)
+                // 4. INPUT USERNAME / NIM (Wajib, Tanpa Spasi)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Username',
+                    'Username / NIM',
                     style: TextStyle(
                       color: textColor,
                       fontSize: 13.5,
@@ -306,7 +317,7 @@ class _CompleteProfilePageState extends State<CompleteProfilePage> {
                   ],
                   style: TextStyle(color: textColor, fontSize: 14.5),
                   decoration: InputDecoration(
-                    hintText: 'Contoh: ilham_film (tanpa spasi)',
+                    hintText: 'Masukkan NIM atau username (tanpa spasi)',
                     hintStyle: TextStyle(
                       color: subTextColor.withValues(alpha: 0.7),
                       fontSize: 14,

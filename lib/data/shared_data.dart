@@ -325,6 +325,215 @@ class SharedData {
   static final ValueNotifier<UserProfileData> userProfileNotifier =
       ValueNotifier<UserProfileData>(const UserProfileData());
 
+  /// Daftar email yang diketahui terdaftar melalui Google Sign-In (OAuth)
+  static final Set<String> _googleRegisteredEmails = <String>{
+    'zuxxyrg@gmail.com',
+  };
+
+  /// Daftar email yang diketahui terdaftar secara manual (Email & Password)
+  static final Set<String> _manualRegisteredEmails = <String>{};
+
+  /// Menandai bahwa suatu alamat email terdaftar menggunakan Google Sign-In
+  static void markEmailAsGoogleAccount(String? email) {
+    final clean = (email ?? '').trim().toLowerCase();
+    if (clean.isEmpty) return;
+    _manualRegisteredEmails.remove(clean);
+    _googleRegisteredEmails.add(clean);
+  }
+
+  /// Menandai bahwa suatu alamat email terdaftar secara manual (Email & Password)
+  static void markEmailAsManualAccount(String? email) {
+    final clean = (email ?? '').trim().toLowerCase();
+    if (clean.isEmpty) return;
+    _googleRegisteredEmails.remove(clean);
+    _manualRegisteredEmails.add(clean);
+  }
+
+  /// Mencatat provider autentikasi (Google vs Manual) dari objek User Supabase
+  static void recordAuthProviderFromUser({
+    String? email,
+    Map<String, dynamic>? appMetadata,
+    Map<String, dynamic>? userMetadata,
+  }) {
+    final cleanEmail = (email ?? '').trim().toLowerCase();
+    if (cleanEmail.isEmpty) return;
+
+    final appMeta = appMetadata ?? const <String, dynamic>{};
+    final userMeta = userMetadata ?? const <String, dynamic>{};
+
+    final provider = (appMeta['provider'] as String? ?? '').toLowerCase();
+    final providers = (appMeta['providers'] is List)
+        ? (appMeta['providers'] as List)
+            .map((e) => e.toString().toLowerCase())
+            .toList()
+        : const <String>[];
+    final iss = (userMeta['iss'] as String? ?? '').toLowerCase();
+    final rawAvatar =
+        (userMeta['avatar_url'] as String? ?? userMeta['picture'] as String? ?? '')
+            .toLowerCase();
+
+    final isGoogle = provider == 'google' ||
+        providers.contains('google') ||
+        iss.contains('google') ||
+        rawAvatar.contains('googleusercontent.com');
+
+    if (isGoogle) {
+      markEmailAsGoogleAccount(cleanEmail);
+    } else if (provider == 'email') {
+      markEmailAsManualAccount(cleanEmail);
+    }
+  }
+
+  /// Mengecek apakah email yang dimasukkan merupakan akun yang terdaftar melalui Google Sign-In
+  static Future<bool> isGoogleAccountEmail(
+    String email, {
+    SupabaseClient? client,
+    AuthException? authError,
+  }) async {
+    final cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail.isEmpty) return false;
+
+    // 1. Jika sudah tercatat sebagai akun manual biasa, bukan akun khusus Google
+    if (_manualRegisteredEmails.contains(cleanEmail)) {
+      return false;
+    }
+
+    // 2. Jika sudah tercatat sebagai akun Google Sign-In
+    if (_googleRegisteredEmails.contains(cleanEmail)) {
+      return true;
+    }
+
+    // 3. Periksa pesan atau kode error dari Supabase Auth
+    if (authError != null) {
+      final msg = authError.message.toLowerCase();
+      final code = (authError.code ?? '').toLowerCase();
+      if (msg.contains('google') ||
+          msg.contains('oauth') ||
+          msg.contains('provider') ||
+          msg.contains('social') ||
+          msg.contains('identity') ||
+          code.contains('oauth') ||
+          code.contains('provider') ||
+          code.contains('identity')) {
+        markEmailAsGoogleAccount(cleanEmail);
+        return true;
+      }
+    }
+
+    // 4. Periksa tabel profiles di Supabase jika terdapat informasi email/provider/avatar Google
+    final supabase = _getSupabaseClient(client);
+    if (supabase != null) {
+      try {
+        final profileByEmail = await supabase
+            .from('profiles')
+            .select()
+            .eq('email', cleanEmail)
+            .maybeSingle();
+        if (profileByEmail != null && profileByEmail.isNotEmpty) {
+          final prov = (profileByEmail['provider'] as String? ??
+                  profileByEmail['auth_provider'] as String? ??
+                  '')
+              .toLowerCase();
+          final avatar =
+              (profileByEmail['avatar_url'] as String? ?? '').toLowerCase();
+          if (prov == 'google' || avatar.contains('googleusercontent.com')) {
+            markEmailAsGoogleAccount(cleanEmail);
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return false;
+  }
+
+  /// Menormalkan URL avatar agar tidak memicu error HTTP 429 (Too Many Requests)
+  /// pada Flutter Web saat memuat URL CDN `googleusercontent.com` via XHR.
+  static String sanitizeAvatarUrl(
+    String? rawUrl, {
+    String fallback = 'assets/profile.jpg',
+  }) {
+    final trimmed = (rawUrl ?? '').trim();
+    if (trimmed.isEmpty || trimmed.contains('googleusercontent.com')) {
+      return fallback;
+    }
+    return trimmed;
+  }
+
+  /// Mengecek apakah record profil pengguna dengan `id` atau `email` sudah terdaftar
+  /// dan lengkap (memiliki `full_name` dan `username`) di tabel `profiles` Supabase.
+  static Future<bool> isUserProfileRegistered({
+    SupabaseClient? client,
+    String? userId,
+    String? email,
+    Map<String, dynamic>? userMetadata,
+    bool allowMetadataFallback = false,
+  }) async {
+    final supabase = _getSupabaseClient(client);
+    if (supabase == null) return false;
+
+    final authUser = supabase.auth.currentUser;
+    if (authUser != null) {
+      recordAuthProviderFromUser(
+        email: authUser.email,
+        appMetadata: authUser.appMetadata,
+        userMetadata: authUser.userMetadata,
+      );
+    }
+    final effectiveId = (userId ?? authUser?.id ?? '').trim();
+    final effectiveEmail = (email ?? authUser?.email ?? '').trim();
+    final effectiveMeta = userMetadata ?? authUser?.userMetadata ?? {};
+
+    if (effectiveId.isEmpty) return false;
+
+    try {
+      // 1. Cek apakah record profil dengan id pengguna sudah ada di tabel profiles
+      Map<String, dynamic>? profile = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', effectiveId)
+          .maybeSingle();
+
+      // 2. Jika belum ditemukan berdasarkan id dan email tersedia,
+      // cek juga berdasarkan email (jika kolom email tersedia di tabel profiles)
+      if (profile == null && effectiveEmail.isNotEmpty) {
+        try {
+          profile = await supabase
+              .from('profiles')
+              .select()
+              .eq('email', effectiveEmail)
+              .maybeSingle();
+        } catch (_) {}
+      }
+
+      if (profile != null && profile.isNotEmpty) {
+        final dbName = (profile['full_name'] as String? ?? '').trim();
+        final dbUsername = (profile['username'] as String? ?? '').trim();
+        return dbName.isNotEmpty && dbUsername.isNotEmpty;
+      }
+
+      // Fallback opsional (misal untuk pengujian unit test mock yang tidak menyertakan tabel profiles)
+      if (allowMetadataFallback && (profile == null || profile.isEmpty)) {
+        final metaName = (effectiveMeta['full_name'] as String? ?? '').trim();
+        final metaUsername =
+            (effectiveMeta['username'] as String? ?? '').trim();
+        if (metaName.isNotEmpty && metaUsername.isNotEmpty) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch (_) {
+      if (allowMetadataFallback) {
+        final metaName = (effectiveMeta['full_name'] as String? ?? '').trim();
+        final metaUsername =
+            (effectiveMeta['username'] as String? ?? '').trim();
+        return metaName.isNotEmpty && metaUsername.isNotEmpty;
+      }
+      return false;
+    }
+  }
+
   /// Sinkronisasi data profil pengguna dari Supabase Auth dan tabel profiles
   static Future<void> fetchUserProfile({SupabaseClient? client}) async {
     final supabase = _getSupabaseClient(client);
@@ -333,14 +542,22 @@ class SharedData {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
+      recordAuthProviderFromUser(
+        email: user.email,
+        appMetadata: user.appMetadata,
+        userMetadata: user.userMetadata,
+      );
+
       String name = userProfileNotifier.value.fullName;
       String uname = userProfileNotifier.value.username;
       String bio = userProfileNotifier.value.bio;
       String avatar = userProfileNotifier.value.avatarUrl;
 
       final meta = user.userMetadata ?? {};
-      if (meta['full_name'] != null && (meta['full_name'] as String).trim().isNotEmpty) {
-        name = (meta['full_name'] as String).trim();
+      final metaFullName =
+          (meta['full_name'] as String? ?? meta['name'] as String? ?? '').trim();
+      if (metaFullName.isNotEmpty) {
+        name = metaFullName;
       }
       if (meta['username'] != null && (meta['username'] as String).trim().isNotEmpty) {
         uname = (meta['username'] as String).trim();
@@ -348,8 +565,12 @@ class SharedData {
       if (meta['bio'] != null && (meta['bio'] as String).trim().isNotEmpty) {
         bio = (meta['bio'] as String).trim();
       }
-      if (meta['avatar_url'] != null && (meta['avatar_url'] as String).trim().isNotEmpty) {
-        avatar = (meta['avatar_url'] as String).trim();
+      final metaAvatar = sanitizeAvatarUrl(
+        meta['avatar_url'] as String? ?? meta['picture'] as String?,
+        fallback: avatar,
+      );
+      if (metaAvatar.isNotEmpty) {
+        avatar = metaAvatar;
       }
 
       try {
@@ -365,10 +586,11 @@ class SharedData {
             bio = (profile['bio'] as String).trim();
           }
           if (profile['avatar_url'] != null && (profile['avatar_url'] as String).trim().isNotEmpty) {
-            avatar = (profile['avatar_url'] as String).trim();
+            avatar = sanitizeAvatarUrl(profile['avatar_url'] as String, fallback: avatar);
           }
-        } else {
-          // Akun lama belum tercatat di profiles -> sinkronkan otomatis dari userMetadata ke tabel profiles
+        } else if ((meta['username'] as String? ?? '').trim().isNotEmpty &&
+            metaFullName.isNotEmpty) {
+          // Akun lama yang sudah memiliki username & full_name di userMetadata -> sinkronkan ke tabel profiles
           try {
             await supabase.from('profiles').upsert({
               'id': user.id,

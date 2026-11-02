@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../routes/app_router.dart';
 import '../models/drama.dart';
@@ -580,7 +580,7 @@ class _UserProfileDetailPageState extends State<UserProfileDetailPage> {
                           ),
                           _buildStatCard(
                             title: 'Rasio Film & Drama',
-                            value: '$_movieCount Film â€¢ $_dramaCount Drama',
+                            value: '$_movieCount Film \u2022 $_dramaCount Drama',
                             icon: Icons.movie_filter_outlined,
                             iconColor: const Color(0xFFA855F7),
                             cardBg: cardBg,
@@ -744,7 +744,7 @@ class _UserProfileDetailPageState extends State<UserProfileDetailPage> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${drama.genre} â€¢ ${drama.date.isNotEmpty ? drama.date : 'N/A'}',
+                                          '${drama.genre} \u2022 ${drama.date.isNotEmpty ? drama.date : 'N/A'}',
                                           style: TextStyle(
                                             color: subTextColor,
                                             fontSize: 12,

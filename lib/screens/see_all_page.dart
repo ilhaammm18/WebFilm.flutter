@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../routes/app_router.dart';
 import '../data/shared_data.dart';
 import '../models/drama.dart';
@@ -136,7 +136,7 @@ class SeeAllPage extends StatelessWidget {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              '${item.genre.split('â€¢')[0].trim()}  â€¢  2023',
+                              '${item.genre.split('\u2022')[0].trim()}  \u2022  2023',
                               style: TextStyle(color: subTextColor, fontSize: 13),
                             ),
                           ],

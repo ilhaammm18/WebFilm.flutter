@@ -116,8 +116,8 @@ class _MainNavigationState extends State<MainNavigation> {
               globalNavIndex.value = index;
             },
             backgroundColor: bgColor,
-            type: BottomNavigationBarType.fixed, // Pastikan fixed agar semua ikon muncul dan tidak goyang
-            elevation: 8, // Memberikan elevasi untuk mempertegas batas navigasi
+            type: BottomNavigationBarType.fixed,
+            elevation: 8, 
             selectedItemColor: selectedColor,
             unselectedItemColor: unselectedColor,
             selectedFontSize: 12,

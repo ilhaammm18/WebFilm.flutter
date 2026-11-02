@@ -6,7 +6,7 @@ import '../models/drama.dart';
 const List<String> vipActors = ApiService.vipActors;
 
 class ApiService {
-  static const String apiKey = 'f2d1d576c288316fc43ddc223871f357';
+ static const String apiKey = String.fromEnvironment('TMDB_API_KEY');
   static const String baseUrl = 'https://api.themoviedb.org/3';
   final http.Client _client;
 
