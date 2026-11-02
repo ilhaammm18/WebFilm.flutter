@@ -73,10 +73,6 @@ lib/
      "SUPABASE_ANON_KEY": "ISI_DENGAN_ANON_KEY_SUPABASE"
    }
    ```
-4. **Jalankan aplikasi di Chrome (Port 3000):**
-   ```bash
-   flutter run -d chrome --web-port=3000 --dart-define-from-file=env.json
-   ```
 
 ---
 
