@@ -189,7 +189,7 @@ Untuk melakukan *deployment* Flutter Web di **Vercel**:
 
 * **Nama Lengkap:** Muhammad Nur Ilham  
 * **NIM:** 25051204433  
-* **Program Studi / Kelas:** S1 Teknik Informatika (Kelas 2025I)  
+* **Program Studi / Kelas:** S1 Teknik Informatika (Kelas 2025H)  
 * **Institusi:** Universitas Negeri Surabaya (UNESA)  
 
 ---
