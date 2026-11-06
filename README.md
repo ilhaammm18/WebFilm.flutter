@@ -181,6 +181,7 @@ Untuk melakukan *deployment* Flutter Web di **Vercel**:
 ## 🌐 Tautan Akses Aplikasi
 
 * **Live Demo (Vercel):** [https://web-film-flutter.vercel.app/](https://web-film-flutter.vercel.app/)
+  Masuk bisa pakai Email ini atau buat sendiri, Email : ilhampbp@gmail.com, Pw : 87654321
 * **Repositori GitHub:** [https://github.com/ilhaammm18/WebFilm.flutter](https://github.com/ilhaammm18/WebFilm.flutter)
 
 ---
